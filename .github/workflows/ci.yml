@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile || bun install
+      - name: Type check
+        run: bunx tsc --noEmit
+      - name: Test
+        run: bun test
+
+  # Dogfood: agent-diff-guard 用自己守自己的 PR。
+  # 它对这次改动跑一遍守门人;命中 wake-you-up 不让 CI 失败(只在 PR 里可见),
+  # 因为守门人的语义是"让人看一眼",不是"机器拍板拦死"。
+  self-guard:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Run guard against this PR
+        run: |
+          bun src/cli.ts check \
+            --range "origin/${{ github.base_ref }}...HEAD" \
+            --task "${{ github.event.pull_request.title }}" || true

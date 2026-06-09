@@ -18,9 +18,11 @@ function parseArgs(argv: string[]): Args {
   const a: Args = { range: "HEAD", max: 3 };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
-    if (v === "--range") a.range = argv[++i];
-    else if (v === "--task") a.task = argv[++i];
-    else if (v === "--max") a.max = Math.max(1, parseInt(argv[++i] || "3", 10) || 3);
+    // 取下一个参数作为 flag 的值;缺失时退回 undefined,由各分支自行兜底。
+    const next = (): string | undefined => argv[++i];
+    if (v === "--range") a.range = next() ?? a.range;
+    else if (v === "--task") a.task = next();
+    else if (v === "--max") a.max = Math.max(1, parseInt(next() ?? "3", 10) || 3);
   }
   return a;
 }

@@ -31,7 +31,7 @@ export function parseDiff(range: string, cwd: string): FileChange[] {
       push();
       // diff --git a/path b/path
       const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
-      const path = m ? m[2] : line.slice("diff --git ".length);
+      const path = m?.[2] ?? line.slice("diff --git ".length);
       cur = { path, kind: "modified", addedLines: [], removedLines: [] };
     } else if (!cur) {
       continue;

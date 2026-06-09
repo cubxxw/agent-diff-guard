@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# agent-diff-guard pre-push hook —— 在 push 前对即将推送的改动刹一脚。
+#
+# 安装:把本文件复制为目标仓库的 .git/hooks/pre-push 并 chmod +x,
+# 或用 install.sh 自动安装。
+#
+# 行为:对本地领先远端的改动跑守门人;发现 wake-you-up 级改动 → 退出 1 阻断 push,
+#       逼你看一眼后用 `git push --no-verify` 显式放行。平时安静放行。
+#
+# 注意:必须直接用 `bun <cli>`,不要用 `bun run`(run 封装会吞掉退出码)。
+
+set -euo pipefail
+
+# 解析 agent-diff-guard 的 cli:优先环境变量(可设为 "bun /abs/path/src/cli.ts"),否则全局命令
+GUARD_CLI="${AGENT_DIFF_GUARD_CLI:-agent-diff-guard}"
+
+# 计算要检查的范围:远端已有则 @{u}..HEAD,否则退化为最近一次提交
+if git rev-parse '@{u}' >/dev/null 2>&1; then
+  RANGE="@{u}..HEAD"
+else
+  RANGE="HEAD~1..HEAD"
+fi
+
+# 可选:用最近一次 commit message 当"声称的任务",喂给偏离检测
+TASK="$(git log -1 --pretty=%s 2>/dev/null || true)"
+
+if $GUARD_CLI check --range "$RANGE" --task "$TASK"; then
+  exit 0
+else
+  echo ""
+  echo "  ↑ agent-diff-guard 拦下了上面这些改动。看一眼;确认无碍后用:git push --no-verify"
+  exit 1
+fi

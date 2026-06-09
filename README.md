@@ -43,3 +43,16 @@ v0.0.1 — 单兵 dogfood 阶段。规则引擎 + diff 解析 + 偏离检测 + p
 - [ ] 偏离检测目前是词面关联,需升级为语义判断
 - [ ] 规则可配置化(每个仓库自定义敏感路径)
 - [ ] GitHub Marketplace 分发 / PR 评论形态(团队版留存抓手)
+
+## 设计与路线
+
+- [**docs/DESIGN.md**](./docs/DESIGN.md) — 为什么这个位置存在、护城河在哪、谁会付钱、定价怎么定、最大的风险是什么。
+- [**docs/ROADMAP.md**](./docs/ROADMAP.md) — 从单兵 CLI → 团队 PR 守门 → 企业治理层的形态演进,以及"始终不做的事"。
+
+## 贡献
+
+欢迎,但门槛很硬:**误报是头号敌人**。新增规则必须附带「不误报」测试用例。详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## License
+
+[MIT](./LICENSE) © Xinwei Xiong (cubxxw)

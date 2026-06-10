@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { readEvents } from "./logger";
 import { ruleRank, timeline, dispositions, overview } from "./stats";
+import { allSessions, projectUsage, usageOverview, recentSessions } from "./sessions";
+import { allRecords, dailyStats, dayStat } from "./daily";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -20,6 +22,21 @@ const JSON_HEADERS = {
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
+}
+
+// ── 缓存:扫全部 session 日志很慢(秒级),同一面板的多个请求共享一次扫描。 ──
+// TTL 30s:刷新页面能拿到几乎最新的数据,又不会每个请求都重扫一遍磁盘。
+const TTL_MS = 30_000;
+let recCache: { at: number; data: ReturnType<typeof allRecords> } | null = null;
+let sessCache: { at: number; data: ReturnType<typeof allSessions> } | null = null;
+
+function cachedRecords(): ReturnType<typeof allRecords> {
+  if (!recCache || Date.now() - recCache.at > TTL_MS) recCache = { at: Date.now(), data: allRecords() };
+  return recCache.data;
+}
+function cachedSessions(): ReturnType<typeof allSessions> {
+  if (!sessCache || Date.now() - sessCache.at > TTL_MS) sessCache = { at: Date.now(), data: allSessions() };
+  return sessCache.data;
 }
 
 /** web 静态资源目录(相对本文件) */
@@ -31,11 +48,29 @@ async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  // ── 统计 API:每次请求实时聚合(数据量小,内存够) ──
+  // ── 守门审计 API:实时聚合 events.jsonl ──
   if (path === "/api/stats/overview") return jsonResponse(overview(readEvents()));
   if (path === "/api/stats/rules") return jsonResponse(ruleRank(readEvents()));
   if (path === "/api/stats/timeline") return jsonResponse(timeline(readEvents()));
   if (path === "/api/stats/dispositions") return jsonResponse(dispositions(readEvents()));
+
+  // ── 成本/Session API:解析 Claude Code 本地 session 日志(读一次复用) ──
+  if (path.startsWith("/api/sessions/")) {
+    const sessions = cachedSessions();
+    if (path === "/api/sessions/overview") return jsonResponse(usageOverview(sessions));
+    if (path === "/api/sessions/projects") return jsonResponse(projectUsage(sessions));
+    if (path === "/api/sessions/recent") return jsonResponse(recentSessions(sessions));
+  }
+
+  // ── 今日/Daily API:按天切片的活跃度(token/消息/工具/活跃时长) ──
+  if (path.startsWith("/api/daily/")) {
+    const records = cachedRecords();
+    if (path === "/api/daily/list") return jsonResponse(dailyStats(records));
+    if (path === "/api/daily/today") {
+      const today = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+      return jsonResponse(dayStat(today, records));
+    }
+  }
 
   // ── 静态面板 ──
   if (path === "/" || path === "/index.html") {

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 新增:面板扩展为三标签(今日 Daily / 成本 / 守门)
+- **今日 Daily**(`src/daily.ts`):对标 agentboard 的每日活跃度仪表盘。解析 `~/.claude/projects` session 日志,按天聚合 token(in/out/cache)、消息数(AI/User)、工具调用、活跃时长(消息时间戳聚集度估算,>5min 间隔算离开)、项目数、估算成本。支持按日期回看 + 30 天趋势 + 历史明细表。
+- **成本 / Session**(`src/sessions.ts`):各项目/仓库累计 token 消耗排行 + 最近 session 列表,回答"哪个项目最烧钱"。
+- 面板(`web/index.html`)重构为三标签页;`serve-local.ts` 新增 `/api/daily/*` 与 `/api/sessions/*` 路由,加 30s TTL 内存缓存(冷请求扫盘 ~10s → 热请求 ~17ms)。
+- 隐私红线延续:session/成本数据只在本机聚合,不联网不上传;成本为按模型单价的估算。
+- 新增 `src/sessions.test.ts` / `src/daily.test.ts`(含活跃时长算法测试)。
+
 ### 新增:本地审计面板
 - **事件日志层**(`src/event.ts` / `src/logger.ts` / `src/id.ts` / `src/hash.ts`):每次 `check` 把一条只含元数据的 `GuardEvent` 追加到 `~/.agent-diff-guard/events.jsonl`。隐私红线:evidence 正文、task 原文、git email 原文绝不落盘(只记 hash 与统计),有单元测试守住。
 - **聚合层**(`src/stats.ts`):ruleRank / timeline / dispositions / overview 四个纯函数聚合。

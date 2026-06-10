@@ -86,6 +86,27 @@ export function listPending(): InboxItem[] {
   return out;
 }
 
+/** 列出 done/ 里所有已归档指令,按 id(即时间)升序。坏文件跳过。 */
+export function listDone(): InboxItem[] {
+  const dir = doneDir();
+  if (!existsSync(dir)) return [];
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: InboxItem[] = [];
+  for (const f of files.sort()) {
+    try {
+      out.push(JSON.parse(readFileSync(join(dir, f), "utf8")) as InboxItem);
+    } catch {
+      // 坏行/半写文件跳过
+    }
+  }
+  return out;
+}
+
 /**
  * 标记一条指令为已消费:从 pending/ 移到 done/(改 status 后归档)。
  * 返回 true 表示成功移动,false 表示该 id 不存在于 pending。

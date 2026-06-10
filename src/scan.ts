@@ -51,16 +51,21 @@ export function parseDiff(range: string, cwd: string): FileChange[] {
   return changes;
 }
 
-/** 从一段任务描述里抽出有意义的关键词(粗糙但够用) */
+/**
+ * 从一段任务描述里抽出有意义的关键词(粗糙但够用)。
+ *
+ * 切词同时保留拉丁词与 CJK 段:旧版只按 [^a-z0-9_] 切,会把中文/日文整段丢弃,
+ * 导致中文任务描述下偏离检测彻底失效(kws 为空 → 直接放过)。
+ * 拉丁词要求 ≥4 字(滤掉 the/fix);CJK 段要求 ≥2 字(一个汉字太短易误命中,两字起更像实词)。
+ */
 function taskKeywords(task: string): string[] {
-  return Array.from(
-    new Set(
-      task
-        .toLowerCase()
-        .split(/[^a-z0-9_]+/)
-        .filter((w) => w.length >= 4) // 丢掉 the/fix/and 这类短词
-    )
-  );
+  const latin = task
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((w) => w.length >= 4);
+  // 抓连续的 CJK 片段(中文/日文假名/韩文),≥2 字才算关键词
+  const cjk = task.match(/[一-鿿぀-ヿ가-힯]{2,}/g) ?? [];
+  return Array.from(new Set([...latin, ...cjk]));
 }
 
 /**

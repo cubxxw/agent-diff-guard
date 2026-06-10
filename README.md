@@ -92,6 +92,23 @@ bun /path/to/agent-diff-guard/src/cli.ts check \
 
 **被拦后怎么办:** 看一眼那 1–3 处。确认确实没问题,就用 `git push --no-verify` 显式放行。守门人的工作不是替你拍板,是逼你在合并前**有意识地看一次**。
 
+## 审计面板(本地、只读)
+
+每次 `check` 都会把一条**只含元数据**的事件追加到 `~/.agent-diff-guard/events.jsonl`(绝不记录代码正文、密钥原文、任务原文 —— 只记 rule/path/时间/统计与 hash)。攒一段时间后,起个本地面板看趋势:
+
+```bash
+bun src/cli.ts serve          # 默认 http://localhost:4757
+bun src/cli.ts serve --port 8080
+```
+
+面板回答的是 **tech lead / 合规** 周期性审计的问题(不是给个人实时盯的大屏):
+
+- **风险趋势** — 我们 agent 的风险水位在升还是降?哪天异常爆发?
+- **高发规则排行** — 我们的 agent 最常碰哪类危险区?(密钥?CI?供应链?)
+- **放行审计流** — 每条 wake-you-up 改动最终被拦了还是被谁放行了?
+
+> 它是**周期性审计工具**,不是实时监控大屏 —— 刷新页面看一次趋势,不主动推送、不联网、数据不出本机。这与产品"省注意力"的哲学一致(见 [docs/DESIGN.md](./docs/DESIGN.md))。云端团队版的多人汇总是路线图的下一步。
+
 ## 状态
 
 v0.0.1 — 单兵 dogfood 阶段。规则引擎 + diff 解析 + 偏离检测 + pre-push hook 已端到端跑通。

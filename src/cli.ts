@@ -9,8 +9,12 @@
 //   agent-diff-guard check [--range <git-range>] [--task "<本次任务描述>"] [--max N]
 //   退出码 0 = 放行;1 = 有 wake-you-up 级发现,该看一眼(可用于 git hook 阻断)。
 
+import { spawnSync } from "node:child_process";
 import { parseDiff, driftFindings } from "./scan";
 import { runRules, type Finding } from "./rules";
+import { buildEvent } from "./event";
+import { appendEvent } from "./logger";
+import pkg from "../package.json" with { type: "json" };
 
 interface Args { range: string; task?: string; max: number; }
 
@@ -20,7 +24,8 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
 在合并前把那 1-3 处拎到你眼前逼一次确认。平时放行,关键时刻刹车。
 
 用法:
-  agent-diff-guard check [选项]
+  agent-diff-guard check [选项]      扫一次改动(默认行为)
+  agent-diff-guard serve [--port N]  启动本地审计面板(读历史守门记录)
 
 选项:
   --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
@@ -90,7 +95,17 @@ function render(findings: Finding[], max: number): void {
   }
 }
 
-function main(): void {
+/** 取 git remote origin 的去敏标识(host+path,剥掉协议与可能的 token)。取不到返回 null。 */
+function repoRemote(): string | null {
+  const r = spawnSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const url = r.stdout.trim();
+  // git@github.com:owner/repo.git  或  https://[token@]github.com/owner/repo.git
+  const m = url.match(/(?:@|:\/\/)([^/:]+)[/:](.+?)(?:\.git)?$/);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
   const cmd = rawArgs[0];
 
@@ -99,7 +114,17 @@ function main(): void {
     console.log(HELP);
     process.exit(0);
   }
-  // 给了一个不认识的子命令(既不是 check 也不是 flag)→ 用法错误
+
+  // serve 子命令:启动本地审计面板(懒加载,check 路径不付出 server 代价)
+  if (cmd === "serve") {
+    const pi = rawArgs.indexOf("--port");
+    const port = pi >= 0 ? parseInt(rawArgs[pi + 1] ?? "4757", 10) || 4757 : 4757;
+    const { startLocalServer } = await import("./serve-local");
+    startLocalServer(port);
+    return; // server 常驻,不退出
+  }
+
+  // 给了一个不认识的子命令(既不是 check/serve 也不是 flag)→ 用法错误
   if (cmd && !cmd.startsWith("-") && cmd !== "check") {
     console.error(`未知命令: ${cmd}\n`);
     console.error(HELP);
@@ -120,6 +145,23 @@ function main(): void {
   render(findings, args.max);
 
   const hasWake = findings.some((f) => f.severity === "wake-you-up");
+
+  // 落一条审计事件(只记元数据,不记代码正文)。失败不影响守门退出码。
+  try {
+    const event = await buildEvent({
+      cliVersion: pkg.version,
+      gitRange: args.range,
+      task: args.task,
+      changes,
+      findings,
+      disposition: hasWake ? "blocked" : "auto-pass",
+      repoRemote: repoRemote(),
+    });
+    appendEvent(event);
+  } catch (e) {
+    console.warn("[adg] 审计事件构造失败(不影响守门结果):", (e as Error).message);
+  }
+
   process.exit(hasWake ? 1 : 0);
 }
 

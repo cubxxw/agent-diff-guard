@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 新增:本地审计面板
+- **事件日志层**(`src/event.ts` / `src/logger.ts` / `src/id.ts` / `src/hash.ts`):每次 `check` 把一条只含元数据的 `GuardEvent` 追加到 `~/.agent-diff-guard/events.jsonl`。隐私红线:evidence 正文、task 原文、git email 原文绝不落盘(只记 hash 与统计),有单元测试守住。
+- **聚合层**(`src/stats.ts`):ruleRank / timeline / dispositions / overview 四个纯函数聚合。
+- **本地服务**(`src/serve-local.ts`):`agent-diff-guard serve` 用 `Bun.serve()` 起本地只读面板,实时聚合 events.jsonl,零上传、零依赖。
+- **Web 面板**(`web/index.html`):单文件、零依赖、零构建。GitHub 暗色风,展示风险趋势(SVG 折线)、高发规则排行、放行审计流。服务 tech lead/合规的周期性审计,不是实时大屏。
+- `cli.ts`:新增 `serve` 子命令;`check` 末尾落审计事件(失败不影响守门退出码)。
+- 新增 `src/stats.test.ts` / `src/event.test.ts`(含隐私红线回归测试)。
+
 ### 工程化
 - 补齐生产级开源仓库基建:LICENSE (MIT)、`tsconfig.json` (strict)、GitHub Actions CI(类型检查 + 测试 + 自我 dogfood)、CONTRIBUTING、issue/PR 模板。
 - 新增 `docs/DESIGN.md`(产品设计与商业化方向)与 `docs/ROADMAP.md`(形态演进路线)。

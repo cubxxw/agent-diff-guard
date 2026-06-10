@@ -11,9 +11,14 @@ import { join } from "node:path";
 import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import type { GuardEvent } from "./event";
 
-/** 日志根目录:~/.agent-diff-guard */
+/**
+ * 日志根目录,默认 ~/.agent-diff-guard。
+ * 可用 ADG_HOME 环境变量覆盖 —— 既给用户自定义数据目录的能力,
+ * 也让测试能把读写隔离到临时目录(homedir() 不读 $HOME,无法靠改 env 隔离)。
+ */
 export function logDir(): string {
-  return join(homedir(), ".agent-diff-guard");
+  const override = process.env.ADG_HOME?.trim();
+  return override ? override : join(homedir(), ".agent-diff-guard");
 }
 
 /** 事件日志文件路径 */

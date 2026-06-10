@@ -4,14 +4,16 @@
   "description": "合并前的 agent 改动守门人:当 agent 在你没盯着时改了该看一眼的东西,在合并前把那 1-3 处拎出来逼一次确认。平时放行,关键时刻刹车。",
   "type": "module",
   "bin": {
-    "agent-diff-guard": "src/cli.ts"
+    "agent-diff-guard": "src/cli.ts",
+    "agent-diff-guard-mcp": "src/mcp.ts"
   },
   "scripts": {
     "check": "bun run src/cli.ts check",
+    "mcp": "bun run src/mcp.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["agent", "ai", "ai-agent", "code-review", "git-hook", "guardrail", "harness", "ai-safety", "claude-code", "cursor"],
+  "keywords": ["agent", "ai", "ai-agent", "code-review", "git-hook", "guardrail", "harness", "ai-safety", "claude-code", "cursor", "mcp", "model-context-protocol"],
   "license": "MIT",
   "author": "Xinwei Xiong (cubxxw) <xiong3293172751@outlook.com>",
   "homepage": "https://github.com/cubxxw/agent-diff-guard#readme",
@@ -28,5 +30,9 @@
   "files": ["src", "hooks", "install.sh", "README.md", "LICENSE"],
   "devDependencies": {
     "bun-types": "^1.3.14"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }

@@ -33,7 +33,9 @@ export interface Finding {
 
 // ── 敏感路径:碰了这些,几乎一定该让人确认 ───────────────────────────
 // 故意保守。只列"碰到=高概率出事"的,不列"可能有关"的。
-const SENSITIVE_PATH_RULES: { test: RegExp; rule: string; why: string }[] = [
+// 导出:context 子命令复用这同一张表生成"危险地图",避免危险区定义两处漂移。
+export interface SensitivePathRule { test: RegExp; rule: string; why: string }
+export const SENSITIVE_PATH_RULES: SensitivePathRule[] = [
   { test: /(^|\/)\.github\/workflows\//, rule: "ci-pipeline", why: "改动了 CI/CD 流水线 —— agent 动这里可能改变构建/发布/权限行为" },
   { test: /(^|\/)(Dockerfile|docker-compose\.ya?ml)$/i, rule: "container-build", why: "改动了容器构建定义 —— 影响运行时与攻击面" },
   { test: /\.(tf|tfvars)$/, rule: "iac-terraform", why: "改动了 Terraform —— 可能动到真实云资源,apply 后不可逆" },

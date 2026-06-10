@@ -26,6 +26,9 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
 用法:
   agent-diff-guard check [选项]      扫一次改动(默认行为)
   agent-diff-guard serve [--port N]  启动本地审计面板(读历史守门记录)
+  agent-diff-guard context [--json]  输出本仓库"危险地图",供 agent 编码前读取
+  agent-diff-guard inbox [--json]    读取面板下发的决策指令(供终端 Claude Code 消费)
+                                     [--done <id>] 标记某条已处理并归档
 
 选项:
   --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
@@ -41,7 +44,8 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
 
 示例:
   agent-diff-guard check --range HEAD --task "重构登录表单"
-  ./install.sh /path/to/your/repo        # 装成 pre-push hook,push 前自动刹车`;
+  ./install.sh /path/to/your/repo        # 装成 pre-push hook,push 前自动刹车
+  agent-diff-guard context > .agent-guard.md   # 生成危险地图,喂给 agent 当编码前输入`;
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { range: "HEAD", max: 3 };
@@ -124,7 +128,48 @@ async function main(): Promise<void> {
     return; // server 常驻,不退出
   }
 
-  // 给了一个不认识的子命令(既不是 check/serve 也不是 flag)→ 用法错误
+  // context 子命令:把守门人翻转成"编码前输入端"——输出本仓库危险地图。
+  // 默认 markdown(给 agent prompt),--json 给程序消费。懒加载,不拖累 check 路径。
+  if (cmd === "context") {
+    const asJson = rawArgs.includes("--json");
+    const { readEvents } = await import("./logger");
+    const { buildDangerMap, renderMarkdown, toJson } = await import("./context");
+    const map = buildDangerMap({ repo: repoRemote(), events: readEvents() });
+    console.log(asJson ? toJson(map) : renderMarkdown(map));
+    process.exit(0);
+  }
+
+  // inbox 子命令:终端侧消费面板下发的决策指令。这是"面板 → 终端 Claude Code"闭环的终端端。
+  // 默认列出 pending;--done <id> 归档一条;--json 给程序/agent 消费。
+  if (cmd === "inbox") {
+    const { listPending, markDone } = await import("./inbox");
+    const doneIdx = rawArgs.indexOf("--done");
+    if (doneIdx >= 0) {
+      const id = rawArgs[doneIdx + 1];
+      if (!id) { console.error("--done 需要一个指令 id"); process.exit(2); }
+      const ok = markDone(id);
+      console.log(ok ? `已归档:${id}` : `未找到待处理指令:${id}`);
+      process.exit(ok ? 0 : 2);
+    }
+    const items = listPending();
+    if (rawArgs.includes("--json")) {
+      console.log(JSON.stringify(items, null, 2));
+      process.exit(0);
+    }
+    if (items.length === 0) {
+      console.log(C.dim("信箱为空 —— 面板还没下发任何决策。"));
+      process.exit(0);
+    }
+    console.log(C.bold(`\n  面板下发的决策(${items.length} 条待处理):\n`));
+    for (const it of items) {
+      console.log(`  ${C.yellow("▸")} ${C.bold(it.title)}  ${C.dim("[" + it.id + "]")}`);
+      console.log(`    ${it.action}`);
+      console.log(C.dim(`    处理后:agent-diff-guard inbox --done ${it.id}\n`));
+    }
+    process.exit(0);
+  }
+
+  // 给了一个不认识的子命令(既不是 check/serve/context/inbox 也不是 flag)→ 用法错误
   if (cmd && !cmd.startsWith("-") && cmd !== "check") {
     console.error(`未知命令: ${cmd}\n`);
     console.error(HELP);

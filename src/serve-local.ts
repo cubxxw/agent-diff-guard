@@ -12,8 +12,16 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { readEvents } from "./logger";
 import { ruleRank, timeline, dispositions, overview } from "./stats";
-import { allSessions, projectUsage, usageOverview, recentSessions } from "./sessions";
-import { allRecords, dailyStats, dayStat } from "./daily";
+import { projectUsage, usageOverview, recentSessions } from "./sessions";
+import { cachedAllSessions } from "./sessions-cache";
+import { dailyStats, dayStat } from "./daily";
+import { cachedAllRecords } from "./daily-cache";
+import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights } from "./ai";
+import { allTranscripts } from "./transcript";
+import { buildAllInsights } from "./insights";
+import { loadPolicy } from "./policy";
+import { detectViolations, summarizeViolations, type Violation } from "./violations";
+import { writeDecision } from "./inbox";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -24,19 +32,46 @@ function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
 }
 
-// ── 缓存:扫全部 session 日志很慢(秒级),同一面板的多个请求共享一次扫描。 ──
-// TTL 30s:刷新页面能拿到几乎最新的数据,又不会每个请求都重扫一遍磁盘。
-const TTL_MS = 30_000;
-let recCache: { at: number; data: ReturnType<typeof allRecords> } | null = null;
-let sessCache: { at: number; data: ReturnType<typeof allSessions> } | null = null;
+// ── 缓存:两层。 ──
+// 底层:sessions 走增量磁盘缓存(sessions-cache.ts),只重解析当天动过的文件 —— 把首跑后的
+//       全量扫描从分钟级压到亚秒级。daily 暂仍全量,但有下面的内存 TTL 兜住重复请求。
+// 上层:内存 TTL,让同一次页面打开的多个请求共享一次结果,不重复遍历磁盘。
+//       增量缓存已经快,所以 TTL 拉长到 5 分钟足够,既新鲜又省重复 stat。
+const TTL_MS = 300_000;
+let recCache: { at: number; data: ReturnType<typeof cachedAllRecords> } | null = null;
+let sessCache: { at: number; data: ReturnType<typeof cachedAllSessions> } | null = null;
 
-function cachedRecords(): ReturnType<typeof allRecords> {
-  if (!recCache || Date.now() - recCache.at > TTL_MS) recCache = { at: Date.now(), data: allRecords() };
+function cachedRecords(): ReturnType<typeof cachedAllRecords> {
+  if (!recCache || Date.now() - recCache.at > TTL_MS) recCache = { at: Date.now(), data: cachedAllRecords() };
   return recCache.data;
 }
-function cachedSessions(): ReturnType<typeof allSessions> {
-  if (!sessCache || Date.now() - sessCache.at > TTL_MS) sessCache = { at: Date.now(), data: allSessions() };
+function cachedSessions(): ReturnType<typeof cachedAllSessions> {
+  if (!sessCache || Date.now() - sessCache.at > TTL_MS) sessCache = { at: Date.now(), data: cachedAllSessions() };
   return sessCache.data;
+}
+
+// 闭环洞察:transcript 提取走增量磁盘缓存,这里再套内存 TTL 让同次浏览复用。
+let insCache: { at: number; data: ReturnType<typeof buildAllInsights> } | null = null;
+function cachedInsights(): ReturnType<typeof buildAllInsights> {
+  if (!insCache || Date.now() - insCache.at > TTL_MS) insCache = { at: Date.now(), data: buildAllInsights(allTranscripts()) };
+  return insCache.data;
+}
+
+// 飞行记录·越界:跨仓库遍历,各自加载 .agent-policy.json,检测 agent 是否越界。
+interface RepoViolations { project: string; policySource: string | null; policyCount: number; violations: Violation[] }
+let violCache: { at: number; data: RepoViolations[] } | null = null;
+function cachedViolations(): RepoViolations[] {
+  if (violCache && Date.now() - violCache.at <= TTL_MS) return violCache.data;
+  const out: RepoViolations[] = [];
+  for (const rt of allTranscripts()) {
+    if (!rt.repoDir) continue; // 没拿到真实仓库路径就无法读 policy(目录名解码有损,不用它)
+    const ps = loadPolicy(rt.repoDir); // 用 session 自带的准确 cwd 路径
+    if (ps.policies.length === 0) continue; // 没规矩的仓库不进记录(没规矩就没违规)
+    const violations = detectViolations(rt.turns, ps.policies);
+    out.push({ project: rt.project, policySource: ps.source, policyCount: ps.policies.length, violations });
+  }
+  violCache = { at: Date.now(), data: out };
+  return out;
 }
 
 /** web 静态资源目录(相对本文件) */
@@ -53,6 +88,77 @@ async function handle(req: Request): Promise<Response> {
   if (path === "/api/stats/rules") return jsonResponse(ruleRank(readEvents()));
   if (path === "/api/stats/timeline") return jsonResponse(timeline(readEvents()));
   if (path === "/api/stats/dispositions") return jsonResponse(dispositions(readEvents()));
+
+  // ── AI 分析 API:只读元数据 → DeepSeek → 摘要+建议(配了 key 才启用) ──
+  if (path === "/api/ai/status") return jsonResponse({ enabled: isAIEnabled() });
+
+  if (path === "/api/ai/analyze" && req.method === "POST") {
+    if (!isAIEnabled()) return jsonResponse({ ok: false, reason: "AI 未启用(未配置 DEEPSEEK_API_KEY)" });
+    // body 可选传 ids[](只分析选中的事件);不传则分析全部。
+    let ids: string[] | undefined;
+    try {
+      const body = (await req.json()) as { ids?: string[] };
+      ids = Array.isArray(body.ids) ? body.ids : undefined;
+    } catch {
+      ids = undefined; // 空 body 容忍
+    }
+    const all = readEvents();
+    const picked = ids && ids.length > 0 ? all.filter((e) => ids!.includes(e.id)) : all;
+    if (picked.length === 0) return jsonResponse({ ok: false, reason: "没有可分析的事件" });
+    const result = await analyzeEvents(buildAnalysisInput(picked));
+    if (!result) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级,不影响面板)" });
+    return jsonResponse({ ok: true, analyzedCount: picked.length, ...result });
+  }
+
+  // ── 闭环洞察 API:从"任务→改动"历史挖规则进化信号 ──
+  // 裸数据(不调 AI):各仓库哪些敏感规则被反复碰、当时任务是什么(已脱敏)。
+  if (path === "/api/insights/data") {
+    return jsonResponse(cachedInsights());
+  }
+  // AI 分析:把洞察喂给 DeepSeek,产出"规则该降级/升级/新增"的进化建议。
+  if (path === "/api/insights/analyze" && req.method === "POST") {
+    if (!isAIEnabled()) return jsonResponse({ ok: false, reason: "AI 未启用(未配置 DEEPSEEK_API_KEY)" });
+    const insights = cachedInsights();
+    if (insights.length === 0) return jsonResponse({ ok: false, reason: "还没有足够的'任务→改动'历史可分析" });
+    const result = await analyzeInsights(insights);
+    if (!result) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级)" });
+    return jsonResponse({ ok: true, repoCount: insights.length, ...result });
+  }
+
+  // ── 飞行记录·越界 API:agent 有没有违反人定下的规矩(确定性检测,不调 AI) ──
+  if (path === "/api/violations") {
+    const repos = cachedViolations();
+    const all = repos.flatMap((r) => r.violations);
+    return jsonResponse({
+      reposWithPolicy: repos.length,
+      totalViolations: all.length,
+      summary: summarizeViolations(all),
+      byRepo: repos.map((r) => ({
+        project: r.project.split("/").slice(-2).join("/"),
+        policyCount: r.policyCount,
+        violations: r.violations.slice(0, 20),
+      })),
+    });
+  }
+
+  // ── 信箱写入 API:把面板上的用户决策写成指令,等终端 Claude Code 来取 ──
+  if (path === "/api/inbox/decision" && req.method === "POST") {
+    let body: { title?: string; action?: string; context?: Record<string, unknown> };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!body.action || typeof body.action !== "string") {
+      return new Response(JSON.stringify({ ok: false, reason: "缺少 action(要终端执行的指令)" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const item = writeDecision({
+      title: typeof body.title === "string" ? body.title : "未命名决策",
+      action: body.action,
+      context: (body.context as never) ?? {},
+    });
+    return jsonResponse({ ok: true, id: item.id });
+  }
 
   // ── 成本/Session API:解析 Claude Code 本地 session 日志(读一次复用) ──
   if (path.startsWith("/api/sessions/")) {

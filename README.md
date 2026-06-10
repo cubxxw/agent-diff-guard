@@ -92,6 +92,85 @@ bun /path/to/agent-diff-guard/src/cli.ts check \
 
 **被拦后怎么办:** 看一眼那 1–3 处。确认确实没问题,就用 `git push --no-verify` 显式放行。守门人的工作不是替你拍板,是逼你在合并前**有意识地看一次**。
 
+## 反过来用:把守门人变成 agent 的"编码前输入"
+
+守门人平时是**下游**——agent 改完才检查。但它积累的判断("哪些路径碰了就出事"+"本仓库历史实际踩过哪些雷")正是 agent 动手前**最该先知道**的。`context` 子命令把这份"危险地图"翻出来,喂回 agent,让它**改之前避开雷**,而不是改完被刹:
+
+```bash
+agent-diff-guard context              # 输出 Markdown,直接读进 agent 的 system prompt
+agent-diff-guard context --json       # 输出 JSON,给程序消费(MCP / CI)
+agent-diff-guard context > .agent-guard.md   # 落盘,让 Claude Code / Cursor 当上下文加载
+```
+
+输出包含两部分:**通用高危区**(CI/容器/IaC/K8s/env/依赖/鉴权,来自固化规则)+ **本仓库历史实际命中**(从本机审计记录聚合,优先级更高——说明这个仓库在此处尤其容易出事)。和审计一样:**只输出路径与规则,绝不含代码正文**,所以可以放心交给任何 agent。
+
+> 这把 agent-diff-guard 从"事后判官"变成了"事前顾问"。同一套固化的 DevOps 判断力,既守门、又能在 agent 编码时提前提醒。
+
+## 🔌 MCP Server:让任何 agent 自己调用守门能力
+
+上面的 `context` 是"用户手动喂给 agent"。再进一步:把 agent-diff-guard 包成 **MCP server**,让 **Claude Code / Cursor / Cline 等任何支持 MCP 的 agent 自己主动调用**——从"用户装的工具"升级成"agent 工具箱里的能力"。
+
+暴露 4 个 tool:
+
+| tool | agent 什么时候调 | 复用的能力 |
+|---|---|---|
+| `check_diff_risk` | 写完一段代码后、建议提交前 | 守门规则 + 偏离检测 |
+| `get_repo_danger_map` | 开始编码前,先知道哪些区危险 | 危险地图 |
+| `get_rule_insights` | 想知道某规则是真风险还是噪音 | 规则进化洞察(已脱敏) |
+| `list_pending_decisions` | 取人在面板上下发的指令 | 信箱 |
+
+**配置(跨 agent 通用,格式一致,只改路径)**:
+
+```jsonc
+// Claude Code: .mcp.json(项目根)或 ~/.claude.json
+// Cursor:      .cursor/mcp.json
+// Cline:       cline_mcp_settings.json
+{
+  "mcpServers": {
+    "agent-diff-guard": {
+      "command": "bun",
+      "args": ["run", "/绝对路径/agent-diff-guard/src/mcp.ts"]
+    }
+  }
+}
+```
+
+配好后,agent 在编码时就会自己调用——比如写完改动后调 `check_diff_risk`,合并前自己就发现"动了 CI / 加了密钥"。这正是 MCP 官方 roadmap 点名缺失的"audit trail / 守门"能力,以本地、跨 agent、不传代码正文的形态补上。
+
+> 走 stdio transport,本机运行、零网络。stdout 只走协议、日志走 stderr。除规则进化洞察(opt-in,已脱敏)外,其余 tool 都只返回路径/规则元数据,不含代码正文。
+
+## 🛡 飞行记录 · 越界检测:看着 agent 有没有越界
+
+2025 年 Replit 的 AI agent 在被明确告知"代码冻结、未经许可不准改"的情况下,**删了客户的生产数据库,还撒谎说无法回滚**。问题不在"AI 不会干活",而在**没人盯着 agent 实际做了什么、有没有违反人定下的规矩**。
+
+市面上的 AI 工具(CodeRabbit / Greptile)学的是**人写 PR 的偏好**;agent-diff-guard 的飞行记录抓的是**AI agent 实际越了什么界**——这是 agent 时代缺失的治理层。
+
+**怎么用**:在仓库根放一个 `.agent-policy.json` 定义"规矩",记录仪就会从 session 历史里抓出违反(确定性检测,非 LLM,零误判;**只记录、不阻断**,供复盘):
+
+```jsonc
+{
+  "policies": [
+    {
+      "kind": "frozen-path",
+      "name": "禁动密钥与环境文件",
+      "paths": [".env", "secret", "credential"],
+      "reason": "生产密钥敏感,agent 改这些前必须人工确认"
+    },
+    {
+      "kind": "freeze-window",
+      "name": "发布冻结期",
+      "from": "2026-06-28T00:00:00Z",
+      "to": "2026-07-02T23:59:59Z",
+      "reason": "季度发布冻结,期间不准有任何改动"
+    }
+  ]
+}
+```
+
+面板的 **🛡 飞行记录 · 越界** 区会显示:哪个 agent、何时、违反了哪条规矩、改了什么、当时声称在做什么任务(密钥已脱敏)。这是把"宁可漏不可烦"的守门哲学,延展到 agent 行为治理的尺度——**你不是又一个替你干活的 AI,你是 agent 时代缺失的那个审计员**。
+
+> 第一版支持两类确定性规矩:`frozen-path`(禁改路径/文件)、`freeze-window`(冻结时间窗)。规矩由你显式定义,没配置就没规矩——绝不无中生有地报警。
+
 ## 本地面板(只读、不联网、零上传)
 
 ```bash
@@ -100,6 +179,8 @@ bun src/cli.ts serve --port 8080
 ```
 
 面板有三个标签页,全部本机只读、刷新看最新(周期性审计,不是实时盯的大屏):
+
+> **关于加载速度**:成本/Daily 标签要解析 `~/.claude/projects` 下的全部 session 日志(可能几 GB)。**首次启动会扫一遍建缓存**(按文件数,几十秒到几分钟);之后用增量磁盘缓存(`~/.agent-diff-guard/*-cache.json`),**只重解析当天动过的文件**,再进面板基本秒开。缓存按文件 mtime/size 指纹失效,数据始终与日志一致;缓存损坏会自动降级为全量重建。
 
 ### 📊 今日 Daily
 对标 agentboard 的"今天和 agent 干了多少活"。数据来自 `~/.claude/projects` 的 session 日志:
@@ -119,7 +200,47 @@ bun src/cli.ts serve --port 8080
 ### 💰 成本 / Session
 各项目/仓库的累计 token 消耗排行 + 最近 session 列表。回答"哪个项目最烧钱、哪个 session 在失控"。
 
-> **隐私红线**:守门事件只记元数据;session/成本数据只在本机聚合,**不联网、不上传**。成本为按模型单价的**估算**(相对比较用),非账单级精确。这与产品"省注意力 + 代码不离开你的机器"的哲学一致(见 [docs/DESIGN.md](./docs/DESIGN.md))。云端团队版的多人汇总是路线图的下一步。
+## 🤖 AI 整理 + 回调终端(可选,需配 key)
+
+守门审计标签下有一块 **AI 整理** 区,把闭环补完:面板不只是给你看历史,还能让 AI 把这堆审计元数据**总结成态势 + 可执行建议**,你在面板上点选后,建议会**回到终端的 Claude Code 继续执行**。
+
+```
+面板点「分析整理」→ DeepSeek 总结 → 摘要 + 几条建议卡片
+   → 你点「发送到终端 Claude Code」→ 写入本地信箱
+   → 终端 `agent-diff-guard inbox` 读到这条指令 → Claude Code 接着干
+```
+
+**启用方式**:复制 `.env.example` 为 `.env`,填入 `DEEPSEEK_API_KEY`。配了 key 面板就自动出现 AI 区;不配则这块隐藏,其余功能照常。
+
+**终端侧消费**(闭环的另一端):
+```bash
+agent-diff-guard inbox                 # 列出面板下发的待办决策
+agent-diff-guard inbox --json          # JSON 形式,给 Claude Code 程序消费
+agent-diff-guard inbox --done <id>     # 处理完归档留痕
+```
+信箱在 `~/.agent-diff-guard/inbox/`(`pending/` 待办、`done/` 归档),纯文件、可审计——谁在何时让 agent 做了什么,都留痕。
+
+> **AI 的隐私边界(重要)**:启用 AI 后,这是产品里**唯一会联网的一环**,而且只发送**去敏元数据**(规则名 / 文件路径 / 计数),由代码里的 `assertNoSourceLeak()` 在发送前断言把关——**绝不发送代码正文、密钥原文、任务原文、diff 内容**。不配 key 就完全不联网。`.env` 已被 `.gitignore`,key 绝不入库。
+
+## 🔄 规则进化:会学习的守门人(闭环,需配 key)
+
+静态规则的命门是:同一条规则在不同仓库,可能是真危险、也可能是纯噪音。**规则进化**让守门人从你的真实使用历史里学会区分这两者——这是市面上"守门"和"审计"工具都没缝合的一环。
+
+机制:读 Claude Code 的 session 日志(`~/.claude/projects`),提炼每个仓库的**"任务 → 改动"配对**(agent 当时声称做什么、为此改了哪些文件),交叉守门规则,让 AI 判断:
+
+```
+某仓库的 env-file 被碰 4 次,当时任务都是"把 DSN 写进 .env"(任务核心步骤)
+   → AI 判定:正当触碰,这条规则在这个仓库是噪音 → 建议 downgrade(少烦)
+
+某仓库的改动与任务完全不相关(顺手越界)
+   → AI 判定:该 upgrade(更严)
+```
+
+守门审计标签下的 **🔄 规则进化** 区点"学习并建议",AI 会给出每条规则在每个仓库该 `降级/升级/维持/新增`,附理由 + 可执行指令;点"采纳"即写入信箱,终端 `agent-diff-guard inbox` 取来执行。这让"宁可漏不可烦"从一句口号,变成**误报率随真实使用自动下降**的机制。
+
+> **隐私边界升级提示**:规则进化会读取 session **对话内容**(不只是计数)。任务文本里的疑似密钥(`sk-…`/`ghp_…`/AWS/Google key 等)在离开本机前会被 `redactSecrets()` **强制打码**;但对话文本本身会发给 AI 分析。如果你的对话里有不能外传的内容,**不要使用这个功能**(不点"学习并建议"即可,其余功能不受影响)。这是产品里隐私敞口最大的一环,刻意做成**显式手动触发**。
+
+> **隐私红线**:守门事件只记元数据;session/成本数据只在本机聚合,**不联网、不上传**。唯一的例外是上面 opt-in 的 AI 整理(只发去敏元数据)。成本为按模型单价的**估算**(相对比较用),非账单级精确。这与产品"省注意力 + 代码不离开你的机器"的哲学一致(见 [docs/DESIGN.md](./docs/DESIGN.md))。云端团队版的多人汇总是路线图的下一步。
 
 ## 状态
 
@@ -127,7 +248,9 @@ v0.0.1 — 单兵 dogfood 阶段。规则引擎 + diff 解析 + 偏离检测 + p
 
 ### 已知待办(dogfood 暴露)
 - [ ] 范围计算:同一 commit 内多类雷在增量 push 时可能漏报(`@{u}..HEAD` vs 全量)
-- [ ] 偏离检测目前是词面关联,需升级为语义判断
+- [x] ~~偏离检测中文任务失效~~ —— 已修(保留 CJK 关键词);语义判断仍可叠 AI 进一步升级
+- [ ] AI 整理目前是手动触发,可加"时不时自动整理"(定时/阈值触发后推一条信箱)
+- [ ] 终端侧 `inbox --watch` 持续轮询(当前为单次读取)
 - [ ] 规则可配置化(每个仓库自定义敏感路径)
 - [ ] GitHub Marketplace 分发 / PR 评论形态(团队版留存抓手)
 

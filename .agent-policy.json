@@ -1,0 +1,17 @@
+{
+  "$comment": "agent-diff-guard 的治理规矩示例。记录仪只抓违反,不阻断;规矩由你显式定义。",
+  "policies": [
+    {
+      "kind": "frozen-path",
+      "name": "禁动密钥与环境文件",
+      "paths": [".env", "secret", "credential", "private-key"],
+      "reason": "生产密钥/环境配置敏感,agent 改动这些前必须人工确认,默认视为越界以便复盘"
+    },
+    {
+      "kind": "frozen-path",
+      "name": "禁动发布与基础设施",
+      "paths": ["deploy", "release", "Dockerfile", ".github/workflows", "terraform"],
+      "reason": "发布脚本/CI/IaC 一旦被 agent 顺手改动,影响范围不可控,纳入飞行记录重点盯防"
+    }
+  ]
+}

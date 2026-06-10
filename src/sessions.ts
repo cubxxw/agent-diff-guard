@@ -49,13 +49,13 @@ export interface SessionUsage {
   lastActivity: string | null;
 }
 
-/** Claude Code 项目日志根目录 */
-function projectsDir(): string {
+/** Claude Code 项目日志根目录。导出供增量缓存层复用同一遍历起点。 */
+export function projectsDir(): string {
   return join(homedir(), ".claude", "projects");
 }
 
 /** 目录名 "-Users-foo-bar" → 路径 "/Users/foo/bar"(尽力还原,仅用于显示) */
-function decodeProject(dirName: string): string {
+export function decodeProject(dirName: string): string {
   return dirName.replace(/^-/, "/").replace(/-/g, "/");
 }
 
@@ -93,8 +93,8 @@ function accLine(acc: Tok, obj: RawLine): string | null {
   return obj.timestamp ?? null;
 }
 
-/** 解析单个 session 文件 */
-function parseSession(filePath: string, project: string, sessionId: string): SessionUsage | null {
+/** 解析单个 session 文件。导出供增量缓存层(sessions-cache.ts)复用。 */
+export function parseSession(filePath: string, project: string, sessionId: string): SessionUsage | null {
   let raw: string;
   try { raw = readFileSync(filePath, "utf8"); } catch { return null; }
   const acc = emptyTok();

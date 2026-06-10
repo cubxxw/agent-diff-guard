@@ -102,6 +102,21 @@ function toRecord(obj: RawLine, project: string): MsgRecord | null {
   };
 }
 
+/** 解析单个 session 文件为 MsgRecord[]。导出供增量缓存层(daily-cache)复用。 */
+export function parseRecordsFile(filePath: string, project: string): MsgRecord[] {
+  let raw: string;
+  try { raw = readFileSync(filePath, "utf8"); } catch { return []; }
+  const out: MsgRecord[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let obj: RawLine;
+    try { obj = JSON.parse(line) as RawLine; } catch { continue; }
+    const rec = toRecord(obj, project);
+    if (rec) out.push(rec);
+  }
+  return out;
+}
+
 /** 读取所有消息记录(可能慢)。since:只要 >= 这个 epoch ms 的记录(用于"近 N 天"加速)。 */
 export function allRecords(sinceMs?: number): MsgRecord[] {
   const root = projectsDir();
@@ -115,14 +130,8 @@ export function allRecords(sinceMs?: number): MsgRecord[] {
     try { files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl")); } catch { continue; }
     const project = decodeProject(dir);
     for (const f of files) {
-      let raw: string;
-      try { raw = readFileSync(join(dirPath, f), "utf8"); } catch { continue; }
-      for (const line of raw.split("\n")) {
-        if (!line.trim()) continue;
-        let obj: RawLine;
-        try { obj = JSON.parse(line) as RawLine; } catch { continue; }
-        const rec = toRecord(obj, project);
-        if (rec && (sinceMs === undefined || rec.ts >= sinceMs)) out.push(rec);
+      for (const rec of parseRecordsFile(join(dirPath, f), project)) {
+        if (sinceMs === undefined || rec.ts >= sinceMs) out.push(rec);
       }
     }
   }

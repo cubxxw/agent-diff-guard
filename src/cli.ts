@@ -14,6 +14,30 @@ import { runRules, type Finding } from "./rules";
 
 interface Args { range: string; task?: string; max: number; }
 
+const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
+
+当 agent 在你没盯着时改了该看一眼的东西(CI/密钥/删测试/任务外顺手改),
+在合并前把那 1-3 处拎到你眼前逼一次确认。平时放行,关键时刻刹车。
+
+用法:
+  agent-diff-guard check [选项]
+
+选项:
+  --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
+                        常用: "@{u}..HEAD" 检查领先远端的改动
+  --task "<一句话>"      本次声称的任务,用于"任务 vs 实际改动"偏离检测
+  --max <N>             最多拎出几处 wake-you-up 发现 (默认: 3,绝不刷屏)
+  -h, --help            显示本帮助
+
+退出码:
+  0  放行 (没有该半夜惊醒的改动)
+  1  刹车 (有 wake-you-up 级发现,该看一眼 —— git hook 据此阻断)
+  2  用法/读取错误
+
+示例:
+  agent-diff-guard check --range HEAD --task "重构登录表单"
+  ./install.sh /path/to/your/repo        # 装成 pre-push hook,push 前自动刹车`;
+
 function parseArgs(argv: string[]): Args {
   const a: Args = { range: "HEAD", max: 3 };
   for (let i = 0; i < argv.length; i++) {
@@ -67,12 +91,22 @@ function render(findings: Finding[], max: number): void {
 }
 
 function main(): void {
-  const args = parseArgs(process.argv.slice(2));
-  const cmd = process.argv[2];
-  if (cmd && !cmd.startsWith("--") && cmd !== "check") {
-    console.error('usage: agent-diff-guard check [--range <git-range>] [--task "..."] [--max N]');
+  const rawArgs = process.argv.slice(2);
+  const cmd = rawArgs[0];
+
+  // 无参 或 -h/--help → 显示帮助并退出(别让第一次用的人面对静默扫描)
+  if (rawArgs.length === 0 || cmd === "-h" || cmd === "--help") {
+    console.log(HELP);
+    process.exit(0);
+  }
+  // 给了一个不认识的子命令(既不是 check 也不是 flag)→ 用法错误
+  if (cmd && !cmd.startsWith("-") && cmd !== "check") {
+    console.error(`未知命令: ${cmd}\n`);
+    console.error(HELP);
     process.exit(2);
   }
+
+  const args = parseArgs(rawArgs);
 
   let changes;
   try {

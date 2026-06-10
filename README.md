@@ -22,17 +22,75 @@
 
 加上一个 CI/lint 做不了、agent 时代独有的判断——**任务 vs 实际改动的偏离**:你声称的任务是 A,agent 却顺手改了和 A 无关的 B。
 
-## 用法
+## 快速开始
+
+### 前置要求
+
+只需要 [Bun](https://bun.sh) ≥ 1.3(规则引擎和 CLI 都是零运行时依赖的 TypeScript)。
 
 ```bash
-# 手动扫当前改动
-bun src/cli.ts check --range HEAD --task "本次任务的一句话描述"
+curl -fsSL https://bun.sh/install | bash   # 没装 Bun 的话
+```
 
-# 装到任意仓库的 git hook(push 前自动刹车)
+### 安装
+
+```bash
+git clone https://github.com/cubxxw/agent-diff-guard
+cd agent-diff-guard
+bun install
+bun src/cli.ts --help     # 看到帮助 = 装好了
+```
+
+### 用法一:手动扫一次当前改动
+
+在**你自己的项目**里,让 agent 改完代码后、push 之前:
+
+```bash
+bun /path/to/agent-diff-guard/src/cli.ts check \
+  --range HEAD \
+  --task "你这次让 agent 干的事,一句话"
+```
+
+- `--range`:要检查的范围。`HEAD` = 当前所有改动;`@{u}..HEAD` = 领先远端的改动。
+- `--task`:你声称的任务。给了它,守门人才能做「任务 vs 实际改动」的偏离检测。
+- 退出码:`0` 放行 / `1` 该看一眼 / `2` 用法或读取错误。
+
+### 用法二:装成 pre-push hook(push 前自动刹车,推荐)
+
+```bash
+# 在 agent-diff-guard 目录下,把守门人装到目标仓库
 ./install.sh /path/to/your/repo
 ```
 
-被拦后,看一眼;确认无碍用 `git push --no-verify` 放行。
+装好后,每次 `git push` 前守门人会自动跑。平时静默放行;只有发现该看一眼的改动时才刹车。
+
+## 看懂输出
+
+**没事时**(绝大多数 push)——一行,放行:
+
+```
+✓ agent-diff-guard: 这批改动没有该半夜惊醒的东西,放行。
+```
+
+**有事时**——把最该看的拎到你眼前(最多 3 处,绝不刷屏):
+
+```
+  agent-diff-guard — 合并前请看一眼
+
+  ● .github/workflows/deploy.yml  [ci-pipeline]
+    改动了 CI/CD 流水线 —— agent 动这里可能改变构建/发布/权限行为
+
+  ● config.ts  [hardcoded-secret]
+    新增了疑似硬编码的密钥/令牌 —— 一旦合并入库几乎不可撤回
+    ↳ const apiKey = "sk_live_a1b2c3d4e5f6g7h8i9";
+
+  ● foo.test.ts  [test-deleted]
+    删除或大幅削减了测试 —— agent 可能在用'删测试'来让 CI 变绿
+```
+
+> 上面这个例子来自一次真实场景:agent 声称"更新文档措辞",实则动了 CI、删了测试、加了硬编码密钥。守门人在 push 前把这三处刹住了。
+
+**被拦后怎么办:** 看一眼那 1–3 处。确认确实没问题,就用 `git push --no-verify` 显式放行。守门人的工作不是替你拍板,是逼你在合并前**有意识地看一次**。
 
 ## 状态
 

@@ -21,7 +21,9 @@ import { allTranscripts } from "./transcript";
 import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
 import { detectViolations, summarizeViolations, type Violation } from "./violations";
-import { writeDecision } from "./inbox";
+import { writeDecision, listPending, listDone } from "./inbox";
+import { buildQueue } from "./findings";
+import { repoHistory, staticZones } from "./context";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -74,6 +76,73 @@ function cachedViolations(): RepoViolations[] {
   return out;
 }
 
+// 审查队列:实时跑 git diff,成本略高,内存 TTL 短一点(30s),保证"刷新看最新"又不卡。
+const QUEUE_TTL_MS = 30_000;
+let queueCache: { at: number; data: ReturnType<typeof buildQueue> } | null = null;
+function cachedQueue(): ReturnType<typeof buildQueue> {
+  if (!queueCache || Date.now() - queueCache.at > QUEUE_TTL_MS) {
+    queueCache = { at: Date.now(), data: buildQueue() };
+  }
+  return queueCache.data;
+}
+
+/**
+ * 危险地图:把每个仓库的"通用高危区(固化规则)+ 本仓库历史命中(events 聚合)"
+ * 拼成面板要的形态。repo 维度来自 events.repoRemote;无 remote 的归到一组。
+ */
+function buildDangerMapView() {
+  const events = readEvents();
+  // 按 repoRemote 分组(null → "(本地仓库)")
+  const repos = new Map<string, typeof events>();
+  for (const ev of events) {
+    const key = ev.repoRemote ?? "(本地仓库)";
+    const arr = repos.get(key) ?? [];
+    arr.push(ev);
+    repos.set(key, arr);
+  }
+  const zones = staticZones();
+  const out = [...repos.entries()].map(([repo, evs]) => {
+    const history = repoHistory(evs, repo === "(本地仓库)" ? null : repo);
+    const histByRule = new Map(history.map((h) => [h.rule, h]));
+    // 合并:每条命中过的规则一行(热度由命中数+是否 wake 推),未命中的固化高危区补在后面
+    const rows = history.map((h) => ({
+      path: histByRule.get(h.rule)?.samplePaths[0] ?? h.rule,
+      rule: h.rule,
+      heat: h.wakeCount > 0 ? 3 : h.count >= 3 ? 2 : 1,
+      hits: h.count,
+      note: zones.find((z) => z.rule === h.rule)?.why ?? "本仓库历史命中",
+    }));
+    return { repo: repo.split("/").slice(-2).join("/"), zones: rows };
+  });
+  // 没有任何 events 命中的情况下,至少给一组通用高危区(让面板不空)
+  if (out.every((r) => r.zones.length === 0)) {
+    return [
+      {
+        repo: "通用高危区",
+        zones: zones.map((z) => ({ path: z.hint, rule: z.rule, heat: 2, hits: 0, note: z.why })),
+      },
+    ];
+  }
+  return out.filter((r) => r.zones.length > 0);
+}
+
+/** 把 inbox 文件信箱(pending + done)拼成面板列表,时间倒序。 */
+function buildInboxView() {
+  const pending = listPending().map((i) => ({ ...i, status: "pending" as const }));
+  const done = listDone();
+  const all = [...pending, ...done];
+  return all
+    .map((i) => ({
+      id: i.id,
+      time: i.createdAt,
+      title: i.title,
+      action: i.action,
+      source: (i.context as { source?: string }).source ?? "审查队列",
+      status: i.status,
+    }))
+    .sort((a, b) => b.time.localeCompare(a.time));
+}
+
 /** web 静态资源目录(相对本文件) */
 function webDir(): string {
   return join(import.meta.dir, "..", "web");
@@ -88,6 +157,15 @@ async function handle(req: Request): Promise<Response> {
   if (path === "/api/stats/rules") return jsonResponse(ruleRank(readEvents()));
   if (path === "/api/stats/timeline") return jsonResponse(timeline(readEvents()));
   if (path === "/api/stats/dispositions") return jsonResponse(dispositions(readEvents()));
+
+  // ── 审查队列 API:当下未提交/未合并的真实改动,实时 git diff(正文只流给本机) ──
+  if (path === "/api/findings") return jsonResponse(cachedQueue());
+
+  // ── 危险地图 API:通用高危区 + 本仓库历史命中(按 repo 分组) ──
+  if (path === "/api/danger-map") return jsonResponse(buildDangerMapView());
+
+  // ── 终端信箱列表 API:pending + done 全量(状态可见) ──
+  if (path === "/api/inbox/list") return jsonResponse(buildInboxView());
 
   // ── AI 分析 API:只读元数据 → DeepSeek → 摘要+建议(配了 key 才启用) ──
   if (path === "/api/ai/status") return jsonResponse({ enabled: isAIEnabled() });

@@ -1,7 +1,7 @@
 // ai.test.ts — AI 层纯函数测试(不触网:配置解析 / 输入聚合 / 隐私守护)。
 
 import { test, expect } from "bun:test";
-import { readAIConfig, isAIEnabled, buildAnalysisInput, assertNoSourceLeak, type AnalysisInput } from "./ai";
+import { readAIConfig, isAIEnabled, buildAnalysisInput, assertNoSourceLeak, deepCodeAllowed, answerAskGuard, type AnalysisInput } from "./ai";
 import type { GuardEvent } from "./event";
 
 test("readAIConfig:无 key 返回 null,有 key 填默认值", () => {
@@ -59,4 +59,22 @@ test("assertNoSourceLeak:正常路径放行,含换行/超长串拦截", () => {
   const leak: AnalysisInput = { ...ok,
     rules: [{ rule: "x", count: 1, wakeCount: 0, samplePaths: ["const secret = 'abc'\nfunction leak() {}"] }] };
   expect(() => assertNoSourceLeak(leak)).toThrow();
+});
+
+// ── Ask Guard 隐私开关:代码上云必须显式同意 ──
+test("deepCodeAllowed:默认关,只有 ADG_AI_CLOUD_DEEPCODE=1 才开", () => {
+  expect(deepCodeAllowed({})).toBe(false);
+  expect(deepCodeAllowed({ ADG_AI_CLOUD_DEEPCODE: "0" })).toBe(false);
+  expect(deepCodeAllowed({ ADG_AI_CLOUD_DEEPCODE: "true" })).toBe(false); // 必须精确 "1"
+  expect(deepCodeAllowed({ ADG_AI_CLOUD_DEEPCODE: "1" })).toBe(true);
+});
+
+test("answerAskGuard:无 config 直接返回 null(降级,不触网)", async () => {
+  const reply = await answerAskGuard("本周态势如何", { route: "overview" }, { config: null });
+  expect(reply).toBeNull();
+});
+
+test("answerAskGuard:空问题返回 null", async () => {
+  const reply = await answerAskGuard("   ", { route: "overview" }, { config: { apiKey: "k", baseUrl: "https://x", model: "m" } });
+  expect(reply).toBeNull();
 });

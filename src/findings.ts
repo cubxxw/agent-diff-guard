@@ -1,23 +1,28 @@
 // findings.ts — 审查队列的真实数据源。
 //
-// 审查队列要回答的是:"现在,哪些已发生的 agent 改动该被我看一眼、逐条裁决?"
-// 这和 events.jsonl(已落盘的历史元数据)不同 —— 队列要的是【当下未提交/未合并】
-// 的真实改动正文,逐行 diff、声称的任务、偏离度,供人决策。
+// 审查队列要回答的是:"现在,哪些 agent 改动该被我看一眼、逐条裁决?"
+// 它有三个来源,合成一条统一的队列(每项带 origin 标明出处):
 //
-// 数据从哪来(隐私铁律下的取法):
-//   · 声称的任务 / 分支 / 仓库目录 ← transcript(内存归一化,不落盘)
-//   · diff 正文                    ← 请求时实时 `git diff`,只在内存流给【本机】面板
-//   · 命中规则 / 偏离度            ← 复用 rules.runRules + scan.driftFindings(同一套判断)
+//   live    —— 【当下未提交/未合并】的真实改动正文。请求时实时 `git diff`,
+//              逐行 diff、声称的任务、偏离度,供人决策。正文只流给本机面板。
+//   history —— 【过去被刹住】的命中。从 events.jsonl 回流 blocked/wake 命中,
+//              让"守门记录里被刹住的"和"队列里等裁决的"是同一批数据,而非两套断开
+//              的世界。隐私铁律下 events 只存元数据(rule/path/severity/why),
+//              没有 diff 正文 —— 所以 history 项的 diff 为空,展示"历史记录·无正文重放"。
+//   demo    —— 仅当 live+history 都为空时的兜底种子,让新用户进来也能走通
+//              "队列→裁决→信箱"闭环、看清产品长什么样。明确标 origin:"demo"。
 //
-// 关键:diff 正文绝不写进 events.jsonl、绝不上报。它只在这一次 HTTP 响应里存在,
-// 服务对象是同一台机器上的浏览器面板。这与 context/danger 的"路径可出区、内容不出区"
-// 是一致的 —— 这里的内容出的是 localhost,不是云端。
+// 关键:live 的 diff 正文绝不写进 events.jsonl、绝不上报。它只在这一次 HTTP 响应里
+// 存在,服务对象是同一台机器上的浏览器面板。这与 context/danger 的"路径可出区、
+// 内容不出区"一致 —— 这里内容出的是 localhost,不是云端。
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { runRules, type FileChange, type Finding, type Severity } from "./rules";
 import { parseDiff, driftFindings } from "./scan";
 import { allTranscripts, type RepoTranscript, type TaskTurn } from "./transcript";
+import { readEvents } from "./logger";
+import type { GuardEvent } from "./event";
 
 /** diff 的一行(给面板渲染用)。t: 增 / 删 / 上下文。 */
 export interface DiffLine {
@@ -25,9 +30,14 @@ export interface DiffLine {
   s: string;
 }
 
+/** 队列项出处:live=当下 git diff;history=events 回流的历史被刹住;demo=兜底种子。 */
+export type QueueOrigin = "live" | "history" | "demo";
+
 /** 一条待裁决的发现(审查队列的最小单元)。 */
 export interface QueueFinding {
   id: string;
+  /** 这条发现从哪来 —— 决定前端怎么标注"实时 diff / 历史记录 / 演示" */
+  origin: QueueOrigin;
   /** wake-you-up → "wake";look-once → "look"(对齐面板级别词) */
   level: "wake" | "look";
   rule: string;
@@ -113,14 +123,17 @@ function driftScore(changes: FileChange[], task: string | undefined): number | n
 
 export interface BuildQueueOpts {
   transcripts?: RepoTranscript[];
+  /** 注入历史事件(测试用);省略则读 events.jsonl */
+  events?: GuardEvent[];
+  /** 关掉 demo 兜底(测试用,验证 live/history 为空时确实返回空) */
+  noDemo?: boolean;
 }
 
 /**
  * 扫所有有真实仓库目录的 transcript,对其当下待审范围实时跑规则,
- * 产出审查队列。纯读 git、不写任何东西。
+ * 产出 live 队列项。纯读 git、不写任何东西。
  */
-export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
-  const transcripts = o.transcripts ?? allTranscripts();
+function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
   const out: QueueFinding[] = [];
 
   for (const rt of transcripts) {
@@ -155,6 +168,7 @@ export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
       const fc = byPath.get(f.path);
       out.push({
         id: `${range}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
+        origin: "live",
         level: LEVEL[f.severity],
         rule: f.rule,
         repo,
@@ -170,9 +184,131 @@ export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
     }
   }
 
-  // wake 在前、look 在后;同级按时间倒序
+  return out;
+}
+
+/**
+ * 从 events.jsonl 回流"过去被刹住"的命中,转成队列项(origin:history)。
+ * 这是修复"被刹住 ≠ 待裁决"断裂的关键:守门记录里 blocked/wake 的事件,
+ * 应当作为可裁决项出现在队列里,而非只躺在审计流水里。
+ *
+ * 隐私铁律:events 只存元数据(rule/path/severity/whySummary),没有 diff 正文 ——
+ * 所以 history 项 diff 为空、stats 取自 summary、task 只能给 hash 化的占位说明。
+ * 只回流 wake-you-up 级 findings(对齐"宁可漏不可烦":历史 look-once 不再翻旧账)。
+ */
+function buildHistory(events: GuardEvent[]): QueueFinding[] {
+  const out: QueueFinding[] = [];
+  for (const ev of events) {
+    // 只回流"被刹住"的事件里的 wake 命中 —— 这些是真正该被人裁决的
+    if (ev.disposition !== "blocked") continue;
+    const repo = (ev.repoRemote ?? "(本地仓库)").split("/").slice(-2).join("/");
+    for (const f of ev.findings) {
+      if (f.severity !== "wake-you-up") continue;
+      out.push({
+        id: `hist:${ev.id}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
+        origin: "history",
+        level: LEVEL[f.severity],
+        rule: f.rule,
+        repo,
+        branch: null,
+        file: f.path,
+        // events 不留 task 原文(只有 hash),给出可读占位而非假装有正文
+        task: ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,原文未留存)` : "",
+        drift: null,
+        reason: f.whySummary,
+        timestamp: ev.timestamp,
+        stats: { add: 0, del: 0 },
+        diff: [], // 隐私铁律:历史无正文可重放
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 兜底种子:仅当 live+history 都为空时注入,让新用户也能走通闭环、看清产品形态。
+ * 明确标 origin:"demo",前端会打"演示"角标,不会被误认成真实改动。
+ */
+function demoSeeds(): QueueFinding[] {
+  return [
+    {
+      id: "demo:wake:hardcoded-secret",
+      origin: "demo",
+      level: "wake",
+      rule: "hardcoded-secret",
+      repo: "your-org/your-repo",
+      branch: "feat/login",
+      file: "src/config.ts",
+      task: "(演示)接入第三方登录,把回调地址写进配置",
+      drift: 0.72,
+      reason: "新增了疑似硬编码的密钥/令牌 —— 一旦合并入库几乎不可撤回",
+      timestamp: new Date().toISOString(),
+      stats: { add: 3, del: 0 },
+      diff: [
+        { t: " ", s: "export const oauth = {" },
+        { t: "+", s: '  clientSecret: "sk-live-9f3a...本演示密钥已打码",' },
+        { t: " ", s: "  redirectUri: process.env.OAUTH_REDIRECT," },
+      ],
+    },
+    {
+      id: "demo:wake:ci-pipeline",
+      origin: "demo",
+      level: "wake",
+      rule: "ci-pipeline",
+      repo: "your-org/your-repo",
+      branch: "feat/login",
+      file: ".github/workflows/deploy.yml",
+      task: "(演示)接入第三方登录,把回调地址写进配置",
+      drift: 0.9,
+      reason: "改动了 CI/CD 流水线 —— agent 动这里可能改变构建/发布/权限行为,且与当前任务无关",
+      timestamp: new Date().toISOString(),
+      stats: { add: 2, del: 5 },
+      diff: [
+        { t: "-", s: "      - run: npm test" },
+        { t: "+", s: "      - run: npm test || true   # 演示:放宽了 CI 断言" },
+      ],
+    },
+    {
+      id: "demo:look:dependency-manifest",
+      origin: "demo",
+      level: "look",
+      rule: "dependency-manifest",
+      repo: "your-org/your-repo",
+      branch: "feat/login",
+      file: "package.json",
+      task: "(演示)接入第三方登录,把回调地址写进配置",
+      drift: 0.4,
+      reason: "改动了依赖清单 —— 引入了新依赖或改了版本,供应链风险",
+      timestamp: new Date().toISOString(),
+      stats: { add: 1, del: 0 },
+      diff: [{ t: "+", s: '    "passport-oauth2": "^1.8.0",' }],
+    },
+  ];
+}
+
+/** wake 在前、look 在后;同级按时间倒序。 */
+function sortQueue(items: QueueFinding[]): QueueFinding[] {
   const rank = { wake: 0, look: 1 };
-  return out.sort(
+  return items.sort(
     (a, b) => rank[a.level] - rank[b.level] || (b.timestamp ?? "").localeCompare(a.timestamp ?? "")
   );
+}
+
+/**
+ * 合成审查队列:live(当下 git diff)+ history(events 回流被刹住),
+ * 两者都空时返回 demo 兜底种子。同一 file+rule 优先保留 live(有正文)。
+ */
+export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
+  const transcripts = o.transcripts ?? allTranscripts();
+  const live = buildLive(transcripts);
+  const events = o.events ?? readEvents();
+  const history = buildHistory(events);
+
+  // 去重:live 已覆盖的 file+rule 不再用 history 重复列(live 有正文,更优)
+  const liveKeys = new Set(live.map((f) => `${f.repo}:${f.rule}:${f.file}`));
+  const dedupedHistory = history.filter((f) => !liveKeys.has(`${f.repo}:${f.rule}:${f.file}`));
+
+  const merged = [...live, ...dedupedHistory];
+  if (merged.length === 0 && !o.noDemo) return sortQueue(demoSeeds());
+  return sortQueue(merged);
 }

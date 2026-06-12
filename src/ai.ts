@@ -338,3 +338,132 @@ export async function analyzeInsights(
   const content = await callDeepSeek(buildInsightMessages(top), config, opts.timeoutMs ?? 120_000);
   return content ? parseInsightResult(content, config.model) : null;
 }
+
+// ── Ask Guard:面板上「问守门人」对话窗的 DeepSeek 后端 ──────────────
+//
+// ⚠️ 隐私边界(与本文件其余部分不同,务必读这段):
+//   本文件其余函数严守"只传元数据"(assertNoSourceLeak)。Ask Guard 是【显式例外】:
+//   用户在面板上主动提问、且通过 ADG_AI_CLOUD_DEEPCODE 开关知情同意后,问题的上下文
+//   (可能含 diff 正文 / 任务原文)才会发给 DeepSeek。这是用户的选择,不是默认行为。
+//   每条上云回答都会带 tier 标注,前端把"代码已上云"画成醒目警告 —— 越界必须可见。
+
+/** Ask Guard 一次问答的上下文(调用方按需填,可含代码正文 → 只在开关打开时上云)。 */
+export interface AskGuardContext {
+  /** 当前页面路由(给模型定位用户在看什么) */
+  route?: string;
+  /** 顶层态势(元数据) */
+  overview?: { totalScans?: number; totalBlocked?: number; passRate?: number; reposWatched?: number };
+  /** 待裁决/历史的发现摘要(可能含 file/rule/reason/task/diff 片段) */
+  findings?: { file: string; rule: string; repo?: string; level?: string; reason?: string; task?: string; diff?: string }[];
+  /** 规则命中统计(元数据) */
+  rules?: { rule: string; count: number; wakeCount: number }[];
+  /** 越界摘要(元数据) */
+  violations?: { policyName: string; offendingFiles?: string[]; reason?: string }[];
+}
+
+/** Ask Guard 回答的一个内容块(对齐前端 MsgBlock)。 */
+export type AskBlock =
+  | { kind: "p"; text: string }
+  | { kind: "stat"; items: [string, string | number][] }
+  | { kind: "cluster"; items: [string, string, string][] };
+
+/** Ask Guard 一次回答。tier 决定前端出处标签:cloud-code = 代码已上云(醒目警告)。 */
+export interface AskGuardReply {
+  blocks: AskBlock[];
+  /** meta=只用了元数据;cloud-code=上下文含代码正文且已上云 */
+  tier: "meta" | "cloud-code";
+  model: string;
+  proposal?: { title: string; command: string; note: string };
+}
+
+/** 上下文里是否夹带了代码正文/任务原文(决定 tier 与是否需要开关)。 */
+function contextHasCode(ctx: AskGuardContext): boolean {
+  return (ctx.findings || []).some((f) => (f.diff && f.diff.length > 0) || (f.task && f.task.length > 0));
+}
+
+/** 含代码上云是否被允许(显式开关;默认关 —— 安全优先)。 */
+export function deepCodeAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return env.ADG_AI_CLOUD_DEEPCODE?.trim() === "1";
+}
+
+function buildAskMessages(question: string, ctx: AskGuardContext, withCode: boolean): { role: string; content: string }[] {
+  const system =
+    "你是 agent-diff-guard 的「问守门人」助手。守门人的核心哲学是【宁可漏,不可烦】——你的唯一目标是" +
+    "降低用户每个裁决的注意力成本,而不是产出更多要读的东西。规则:" +
+    "(1) 只在给定的审计上下文范围内回答(守门发现、规则、越界、态势);超出范围(通用编码问题)就礼貌说明你只看审计数据。" +
+    "(2) 回答要短、像资深 DevOps,不刷屏不夸张。" +
+    "(3) 若发现多条 wake 像同一次改动(声称做A顺手动了B),把它们聚成一组(cluster)。" +
+    "(4) 你只提案,绝不声称已执行;若给出可执行修复,放进 proposal,由用户批准后终端才执行。" +
+    "严格按 JSON schema 输出。";
+  const schema =
+    '输出 JSON:{"blocks":[{"kind":"p","text":"..."} 或 {"kind":"stat","items":[["标签",数值],...]} 或 {"kind":"cluster","items":[["规则名","文件路径","一句话说它实际干了啥"],...]}],"proposal"(可选):{"title":"...","command":"给终端Claude Code的可执行指令","note":"一句话说明"}}';
+
+  const ctxParts: string[] = [];
+  if (ctx.route) ctxParts.push(`用户当前在「${ctx.route}」页面。`);
+  if (ctx.overview) {
+    const o = ctx.overview;
+    ctxParts.push(`态势:共 ${o.totalScans ?? 0} 次扫描,刹停 ${o.totalBlocked ?? 0} 次,放行率 ${((o.passRate ?? 1) * 100).toFixed(1)}%,守护 ${o.reposWatched ?? 0} 个仓库。`);
+  }
+  if (ctx.rules?.length) ctxParts.push(`规则命中:${ctx.rules.map((r) => `${r.rule}(${r.count}次/${r.wakeCount}wake)`).join("、")}`);
+  if (ctx.violations?.length) ctxParts.push(`越界:${ctx.violations.map((v) => `${v.policyName}改了${(v.offendingFiles || []).join(",")}`).join(";")}`);
+  if (ctx.findings?.length) {
+    ctxParts.push("待裁决/相关发现:");
+    for (const f of ctx.findings.slice(0, 6)) {
+      let line = `· [${f.level || "?"}] ${f.rule} @ ${f.file}${f.repo ? ` (${f.repo})` : ""} —— ${f.reason || ""}`;
+      if (withCode && f.task) line += `\n  声称任务:"${f.task.replace(/\s+/g, " ").slice(0, 120)}"`;
+      if (withCode && f.diff) line += `\n  改动片段:\n${f.diff.split("\n").slice(0, 20).join("\n")}`;
+      ctxParts.push(line);
+    }
+  }
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: `审计上下文:\n${ctxParts.join("\n")}\n\n用户的问题:${question}\n\n${schema}` },
+  ];
+}
+
+function parseAskReply(raw: string, model: string, tier: AskGuardReply["tier"]): AskGuardReply | null {
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence?.[1]) text = fence[1].trim();
+  try {
+    const obj = JSON.parse(text) as { blocks?: AskBlock[]; proposal?: AskGuardReply["proposal"] };
+    if (!Array.isArray(obj.blocks) || obj.blocks.length === 0) return null;
+    // 只保留合法 block,防模型给脏数据
+    const blocks = obj.blocks.filter((b) => b && (b.kind === "p" || b.kind === "stat" || b.kind === "cluster")) as AskBlock[];
+    if (blocks.length === 0) return null;
+    const proposal =
+      obj.proposal && typeof obj.proposal.title === "string" && typeof obj.proposal.command === "string"
+        ? { title: obj.proposal.title, command: obj.proposal.command, note: typeof obj.proposal.note === "string" ? obj.proposal.note : "" }
+        : undefined;
+    return { blocks, tier, model, proposal };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask Guard 主入口:把问题 + 审计上下文发给 DeepSeek,返回结构化回答。
+ * 隐私分层:上下文若含代码(diff/task)且开关未开 → 剥掉代码再发(降级为元数据),tier=meta;
+ * 开关开 → 连代码一起发,tier=cloud-code(前端醒目标注)。任何失败返回 null,前端降级到接地引擎。
+ */
+export async function answerAskGuard(
+  question: string,
+  ctx: AskGuardContext,
+  opts: { config?: AIConfig | null; timeoutMs?: number; env?: Record<string, string | undefined> } = {}
+): Promise<AskGuardReply | null> {
+  const config = opts.config !== undefined ? opts.config : readAIConfig(opts.env);
+  if (!config || !question.trim()) return null;
+
+  const wantCode = contextHasCode(ctx);
+  const allowCode = deepCodeAllowed(opts.env);
+  const withCode = wantCode && allowCode;
+  // 开关没开却带了代码:剥掉代码字段,只用元数据上云(安全降级,不是拒答)
+  const safeCtx: AskGuardContext = withCode
+    ? ctx
+    : { ...ctx, findings: (ctx.findings || []).map(({ diff, task, ...rest }) => rest) };
+  const tier: AskGuardReply["tier"] = withCode ? "cloud-code" : "meta";
+
+  const content = await callDeepSeek(buildAskMessages(question, safeCtx, withCode), config, opts.timeoutMs ?? 40_000);
+  return content ? parseAskReply(content, config.model, tier) : null;
+}

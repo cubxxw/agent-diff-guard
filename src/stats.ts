@@ -29,6 +29,12 @@ export interface DispositionRow {
   wakeCount: number;
   rulesTriggered: string[];
   disposition: GuardEvent["disposition"];
+  // 下钻用:仓库与每条命中的元数据(隐私铁律:无 diff/task 正文,只有路径与 why 摘要)
+  repoRemote: string | null;
+  taskDescLen: number | null;
+  totalFilesChanged: number;
+  lookCount: number;
+  findings: { rule: string; severity: GuardEvent["findings"][number]["severity"]; path: string; whySummary: string }[];
 }
 
 /** 高发规则排行:按 rule 命中次数降序。 */
@@ -72,6 +78,11 @@ export function dispositions(events: GuardEvent[], limit = 200): DispositionRow[
       wakeCount: ev.summary.wakeCount,
       rulesTriggered: ev.summary.rulesTriggered,
       disposition: ev.disposition,
+      repoRemote: ev.repoRemote,
+      taskDescLen: ev.taskDescLen,
+      totalFilesChanged: ev.summary.totalFilesChanged,
+      lookCount: ev.summary.lookCount,
+      findings: ev.findings.map((f) => ({ rule: f.rule, severity: f.severity, path: f.path, whySummary: f.whySummary })),
     }));
 }
 

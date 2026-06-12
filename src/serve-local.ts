@@ -16,7 +16,7 @@ import { projectUsage, usageOverview, recentSessions } from "./sessions";
 import { cachedAllSessions } from "./sessions-cache";
 import { dailyStats, dayStat } from "./daily";
 import { cachedAllRecords } from "./daily-cache";
-import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights } from "./ai";
+import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights, answerAskGuard, deepCodeAllowed, type AskGuardContext } from "./ai";
 import { allTranscripts } from "./transcript";
 import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
@@ -87,6 +87,31 @@ function cachedQueue(): ReturnType<typeof buildQueue> {
 }
 
 /**
+ * 热度分级(1/2/3)——修掉"恒等于 3"的旧 bug。
+ *
+ * 旧逻辑 `wakeCount > 0 ? 3 : ...` 让任何踩过一次 wake 的规则都锁死 3,与命中频次脱钩
+ * (报告实测 1 次命中和 6 次命中同为 3)。新逻辑按三个维度加权打分,真正分级:
+ *   · 频次   命中越多越热(取 log,避免一条规则刷高把别的压平)
+ *   · 严重度 wake 占比越高越热(被刹住比只是看一眼更危险)
+ *   · 新近度 最近 14 天还在踩 → 加权;超过 60 天没踩 → 降权(老雷自然冷却)
+ * 三档:score ≥ 2.2 → 3(高);≥ 1.1 → 2(中);否则 1(低)。
+ */
+export function heatOf(h: { count: number; wakeCount: number; lastSeen: string }): number {
+  const freq = Math.log2(h.count + 1); // 1→1, 3→2, 7→3 …
+  const wakeRatio = h.count > 0 ? h.wakeCount / h.count : 0;
+  const severity = wakeRatio * 1.5; // 全 wake → +1.5;无 wake → 0
+
+  // 新近度:用本地日期算天数差(lastSeen 是 YYYY-MM-DD)
+  const days = Math.max(0, (Date.now() - new Date(h.lastSeen + "T00:00:00Z").getTime()) / 86400000);
+  const recency = days <= 14 ? 0.6 : days <= 60 ? 0 : -0.6;
+
+  const score = freq + severity + recency;
+  if (score >= 2.2) return 3;
+  if (score >= 1.1) return 2;
+  return 1;
+}
+
+/**
  * 危险地图:把每个仓库的"通用高危区(固化规则)+ 本仓库历史命中(events 聚合)"
  * 拼成面板要的形态。repo 维度来自 events.repoRemote;无 remote 的归到一组。
  */
@@ -104,12 +129,14 @@ function buildDangerMapView() {
   const out = [...repos.entries()].map(([repo, evs]) => {
     const history = repoHistory(evs, repo === "(本地仓库)" ? null : repo);
     const histByRule = new Map(history.map((h) => [h.rule, h]));
-    // 合并:每条命中过的规则一行(热度由命中数+是否 wake 推),未命中的固化高危区补在后面
+    // 合并:每条命中过的规则一行,热度按真实分级算(见 heatOf),未命中的固化高危区补后面
     const rows = history.map((h) => ({
       path: histByRule.get(h.rule)?.samplePaths[0] ?? h.rule,
       rule: h.rule,
-      heat: h.wakeCount > 0 ? 3 : h.count >= 3 ? 2 : 1,
+      heat: heatOf(h),
       hits: h.count,
+      wakeHits: h.wakeCount,
+      lastSeen: h.lastSeen,
       note: zones.find((z) => z.rule === h.rule)?.why ?? "本仓库历史命中",
     }));
     return { repo: repo.split("/").slice(-2).join("/"), zones: rows };
@@ -186,6 +213,40 @@ async function handle(req: Request): Promise<Response> {
     const result = await analyzeEvents(buildAnalysisInput(picked));
     if (!result) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级,不影响面板)" });
     return jsonResponse({ ok: true, analyzedCount: picked.length, ...result });
+  }
+
+  // ── Ask Guard API:面板「问守门人」的 DeepSeek 后端 ──
+  // 前端只传 question + route;context(含 diff/task)由后端从本机数据自组装,
+  // 不经前端 body 来回。是否带代码上云由 ADG_AI_CLOUD_DEEPCODE 开关 + answerAskGuard 内部裁决。
+  if (path === "/api/ai/ask" && req.method === "POST") {
+    if (!isAIEnabled()) return jsonResponse({ ok: false, reason: "AI 未启用(未配置 DEEPSEEK_API_KEY)" });
+    let body: { question?: string; route?: string };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const question = typeof body.question === "string" ? body.question.trim() : "";
+    if (!question) return jsonResponse({ ok: false, reason: "缺少 question" });
+
+    // 从本机数据组装上下文。queue 含 diff/task —— 仅当开关打开时才会被 answerAskGuard 真正上云。
+    const queue = cachedQueue();
+    const ov = overview(readEvents());
+    const violRepos = cachedViolations();
+    const ctx: AskGuardContext = {
+      route: body.route,
+      overview: { totalScans: ov.totalScans, totalBlocked: ov.totalBlocked, passRate: ov.passRate, reposWatched: new Set(queue.map((q) => q.repo)).size },
+      findings: queue.slice(0, 6).map((q) => ({
+        file: q.file, rule: q.rule, repo: q.repo, level: q.level, reason: q.reason,
+        task: q.task || undefined,
+        diff: q.diff && q.diff.length ? q.diff.map((d) => d.t + d.s).join("\n") : undefined,
+      })),
+      rules: ruleRank(readEvents()).slice(0, 8).map((r) => ({ rule: r.rule, count: r.count, wakeCount: r.wakeCount })),
+      violations: violRepos.flatMap((r) => r.violations).slice(0, 5).map((v) => ({ policyName: v.policyName, offendingFiles: v.offendingFiles, reason: v.reason })),
+    };
+    const reply = await answerAskGuard(question, ctx);
+    if (!reply) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级到本机问答)" });
+    return jsonResponse({ ok: true, deepCode: deepCodeAllowed(), ...reply });
   }
 
   // ── 闭环洞察 API:从"任务→改动"历史挖规则进化信号 ──

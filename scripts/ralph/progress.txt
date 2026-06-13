@@ -1,0 +1,16 @@
+# agent-diff-guard — Ralph Progress Log
+Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Tool: claude
+
+## Setup
+- Project: agent-diff-guard — AI agent change gatekeeper (Bun/TypeScript)
+- PRD: prd.json (19/20 stories done, only US-020 remaining)
+- Branch: feat/ask-guard-and-queue-sources
+- Verification: `bun test && tsc --noEmit`
+---
+
+## Codebase Patterns
+- Web frontend is in `web/app.js` and `web/index.html` (static, no bundler)
+- Server is `src/serve-local.ts` using `Bun.serve`
+- Test framework: `bun test` (TypeScript, with `.test.ts` files)
+- AI disclosure text for Ask Guard dialog is around line 1198 in `web/app.js`

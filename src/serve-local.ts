@@ -247,7 +247,7 @@ async function handle(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
     }
     const question = typeof body.question === "string" ? body.question.trim() : "";
-    if (!question) return jsonResponse({ ok: false, reason: "缺少 question" });
+    if (!question) return new Response(JSON.stringify({ ok: false, reason: "缺少 question" }), { status: 400, headers: JSON_HEADERS });
 
     // 从本机数据组装上下文。queue 含 diff/task —— 仅当开关打开时才会被 answerAskGuard 真正上云。
     const queue = cachedQueue();
@@ -331,6 +331,9 @@ async function handle(req: Request): Promise<Response> {
     if (path === "/api/daily/list") return jsonResponse(dailyStats(records));
     if (path === "/api/daily/today") {
       const today = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+        return new Response(JSON.stringify({ ok: false, reason: "date must be YYYY-MM-DD" }), { status: 400, headers: JSON_HEADERS });
+      }
       return jsonResponse(dayStat(today, records));
     }
   }

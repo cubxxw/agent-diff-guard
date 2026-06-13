@@ -95,7 +95,7 @@
   改:`serve-local.ts` 对 `/favicon.ico` 返回内联 svg/data-uri 或 204。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1:4799/favicon.ico); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" != "404" && echo "PASS favicon=$C" || echo FAIL
 
-- [ ] **P3-3 `/api/daily/today?date=` 校验日期格式,非法返回 400**
+- [x] **P3-3 `/api/daily/today?date=` 校验日期格式,非法返回 400**
   改:`serve-local.ts` daily/today 加 `/^\d{4}-\d{2}-\d{2}$/` 校验,不合法 400 JSON。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:4799/api/daily/today?date=bad"); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" = "400" && echo PASS || echo "FAIL got $C"
 

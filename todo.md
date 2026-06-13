@@ -16,7 +16,7 @@
   改:`buildQueue` 对 history 先按 `repo:rule:file` 聚合(保留最近一条 + `hitCount`/`firstSeen`),再与 live 去重。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/findings.test.ts 2>&1 | grep -q ' 0 fail' && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; U=$(curl -s --noproxy '*' http://127.0.0.1:4799/api/findings); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$U" | bun -e 'const it=JSON.parse(await Bun.stdin.text()); const f={}; for(const i of it){const k=(i.repo||"")+":"+(i.rule||"")+":"+(i.file||i.path||"");f[k]=(f[k]||0)+1;} const dup=Object.entries(f).filter(([,n])=>n>1); if(dup.length){console.error("FAIL 仍有重复:",dup);process.exit(1)} console.log("PASS 队列无重复 file@rule")'
 
-- [ ] **P0-2 路径规则分级:常规清单类降 `look-once`,仅高危(密钥/删测试/任务无关碰CI)保持 `wake-you-up`**
+- [x] **P0-2 路径规则分级:常规清单类降 `look-once`,仅高危(密钥/删测试/任务无关碰CI)保持 `wake-you-up`**
   根因:`rules.ts` 所有 severity 全是 `wake-you-up`,`look-once` 从未被使用 → 58.8% push 被刹。
   改:`rules.ts` 让 `dependency-manifest`/`container-build`/`k8s-manifest` 等常规改动类规则用 `look-once`;
   保留 `hardcoded-secret`/`test-deleted`/`ci-pipeline`(任务无关时)为 `wake-you-up`。补/改对应单测。

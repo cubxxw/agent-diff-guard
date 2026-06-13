@@ -34,15 +34,20 @@ export interface Finding {
 // ── 敏感路径:碰了这些,几乎一定该让人确认 ───────────────────────────
 // 故意保守。只列"碰到=高概率出事"的,不列"可能有关"的。
 // 导出:context 子命令复用这同一张表生成"危险地图",避免危险区定义两处漂移。
-export interface SensitivePathRule { test: RegExp; rule: string; why: string }
+// severity 分级(对齐"宁可漏不可烦"):
+//   wake-you-up —— 几乎一定该让人看一眼:apply 不可逆 / 鉴权密钥 / 改流水线权限。
+//   look-once   —— 常规开发也会动、单看一眼即可:装依赖、改 Dockerfile、调副本/资源。
+//                  这些只有叠加"任务无关"(task-drift)时才该升级成 wake。
+// 不写 severity 的规则默认 wake-you-up(保守兜底)。
+export interface SensitivePathRule { test: RegExp; rule: string; why: string; severity?: Severity }
 export const SENSITIVE_PATH_RULES: SensitivePathRule[] = [
-  { test: /(^|\/)\.github\/workflows\//, rule: "ci-pipeline", why: "改动了 CI/CD 流水线 —— agent 动这里可能改变构建/发布/权限行为" },
-  { test: /(^|\/)(Dockerfile|docker-compose\.ya?ml)$/i, rule: "container-build", why: "改动了容器构建定义 —— 影响运行时与攻击面" },
-  { test: /\.(tf|tfvars)$/, rule: "iac-terraform", why: "改动了 Terraform —— 可能动到真实云资源,apply 后不可逆" },
-  { test: /(^|\/)(k8s|kubernetes|manifests|helm|charts)\//i, rule: "k8s-manifest", why: "改动了 K8s/部署清单目录 —— 影响线上拓扑、副本、资源、权限" },
-  { test: /(^|\/)(\.env|\.env\.[^/]+)$/, rule: "env-file", why: "改动了环境变量文件 —— 高概率涉及配置或密钥" },
-  { test: /(^|\/)(package\.json|go\.mod|Cargo\.toml|requirements\.txt|pyproject\.toml|Gemfile)$/, rule: "dependency-manifest", why: "改动了依赖清单 —— 引入了新依赖或改了版本,供应链风险" },
-  { test: /(auth|permission|rbac|policy|secret|credential)/i, rule: "authz-surface", why: "路径涉及鉴权/权限/密钥 —— agent 动这里风险最高" },
+  { test: /(^|\/)\.github\/workflows\//, rule: "ci-pipeline", severity: "wake-you-up", why: "改动了 CI/CD 流水线 —— agent 动这里可能改变构建/发布/权限行为" },
+  { test: /(^|\/)(Dockerfile|docker-compose\.ya?ml)$/i, rule: "container-build", severity: "look-once", why: "改动了容器构建定义 —— 影响运行时与攻击面" },
+  { test: /\.(tf|tfvars)$/, rule: "iac-terraform", severity: "wake-you-up", why: "改动了 Terraform —— 可能动到真实云资源,apply 后不可逆" },
+  { test: /(^|\/)(k8s|kubernetes|manifests|helm|charts)\//i, rule: "k8s-manifest", severity: "look-once", why: "改动了 K8s/部署清单目录 —— 影响线上拓扑、副本、资源、权限" },
+  { test: /(^|\/)(\.env|\.env\.[^/]+)$/, rule: "env-file", severity: "wake-you-up", why: "改动了环境变量文件 —— 高概率涉及配置或密钥" },
+  { test: /(^|\/)(package\.json|go\.mod|Cargo\.toml|requirements\.txt|pyproject\.toml|Gemfile)$/, rule: "dependency-manifest", severity: "look-once", why: "改动了依赖清单 —— 引入了新依赖或改了版本,供应链风险" },
+  { test: /(auth|permission|rbac|policy|secret|credential)/i, rule: "authz-surface", severity: "wake-you-up", why: "路径涉及鉴权/权限/密钥 —— agent 动这里风险最高" },
 ];
 
 // ── 内容级:不看路径,看改了什么 ───────────────────────────────────
@@ -82,7 +87,7 @@ export function pathFindings(fc: FileChange): Finding[] {
   const out: Finding[] = [];
   for (const r of SENSITIVE_PATH_RULES) {
     if (r.test.test(fc.path)) {
-      out.push({ rule: r.rule, severity: "wake-you-up", path: fc.path, why: r.why });
+      out.push({ rule: r.rule, severity: r.severity ?? "wake-you-up", path: fc.path, why: r.why });
       break; // 同一文件命中一条最相关的即可,避免叠加噪音
     }
   }

@@ -31,6 +31,26 @@ test("命中:疑似硬编码密钥", () => {
   expect(f.some((x) => x.rule === "hardcoded-secret")).toBe(true);
 });
 
+// ── 分级:常规清单类只 look-once,不半夜叫醒(对齐"宁可漏不可烦") ────────
+test("分级:装依赖(package.json)是 look-once,不是 wake", () => {
+  const f = runRules([fc("package.json", { addedLines: ['    "lodash": "^4.17.21",'] })]);
+  const dep = f.find((x) => x.rule === "dependency-manifest");
+  expect(dep?.severity).toBe("look-once");
+});
+
+test("分级:改 Dockerfile 是 look-once;k8s 清单是 look-once", () => {
+  const a = runRules([fc("Dockerfile")]);
+  expect(a.find((x) => x.rule === "container-build")?.severity).toBe("look-once");
+  const b = runRules([fc("k8s/deploy.yaml")]);
+  expect(b.find((x) => x.rule === "k8s-manifest")?.severity).toBe("look-once");
+});
+
+test("分级:高危仍是 wake(env/iac/鉴权)", () => {
+  expect(runRules([fc(".env.production")]).find((x) => x.rule === "env-file")?.severity).toBe("wake-you-up");
+  expect(runRules([fc("infra/main.tf")]).find((x) => x.rule === "iac-terraform")?.severity).toBe("wake-you-up");
+  expect(runRules([fc("src/auth/policy.ts")]).find((x) => x.rule === "authz-surface")?.severity).toBe("wake-you-up");
+});
+
 // ── 误报防线:这些是正常改动,一条都不许报 ──────────────────────────
 test("不误报:普通业务代码改动", () => {
   const f = runRules([

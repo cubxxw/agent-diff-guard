@@ -1,0 +1,287 @@
+{
+  "project": "agent-diff-guard",
+  "branchName": "feat/ask-guard-and-queue-sources",
+  "description": "深度体验修复:让审查队列回归克制(去重/分级/只放 live)、偏离检测对低信息任务兜底、修健壮性缺陷、降新手认知门槛。由 todo.md(4 视角并发体验收敛)转成的执行记录。注:本轮 19 个可机器验证 story 已全部实现并提交,passes:true 记录对应 commit;Ralph 不应重复执行已完成项。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "审查队列按 repo:rule:file 聚合 history",
+      "description": "As a 用户, I want 同一处改动在队列里只出现一条(带命中次数), so that 不被重复红徽章淹没。",
+      "acceptanceCriteria": [
+        "buildHistory 按 repo:rule:file 聚合,保留最近一条",
+        "QueueFinding 增 hitCount/firstSeen 字段",
+        "聚合逻辑导出 aggregateHistory 供守门记录页复用",
+        "bun test src/findings.test.ts 通过",
+        "/api/findings 无重复 file@rule",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "已实现 commit 0f2ccb8。队列从 32 条(11 唯一项重复)降到 14 条无重复。"
+    },
+    {
+      "id": "US-002",
+      "title": "路径规则分级,常规清单类降 look-once",
+      "description": "As a 用户, I want 装依赖/改 CI 配置不被半夜叫醒, so that wake 只留给真高危。",
+      "acceptanceCriteria": [
+        "dependency-manifest/container-build/k8s-manifest 改用 look-once",
+        "hardcoded-secret/test-deleted/env-file/iac-terraform/authz-surface/ci-pipeline 保持 wake-you-up",
+        "rules.ts 至少 1 处 severity look-once 实际赋值",
+        "bun test src/rules.test.ts 通过",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "已实现 commit 3f0ced1。SensitivePathRule 加 severity 字段,补分级单测。"
+    },
+    {
+      "id": "US-003",
+      "title": "审查队列默认只放 live,history 移出队列",
+      "description": "As a 用户, I want 队列里只有当下能裁决的改动, so that 不对着 15 天前已合并的旧账裁决。",
+      "acceptanceCriteria": [
+        "buildQueue 加 includeHistory 选项,默认 false",
+        "队列为 live + 必要时 demo;history 交给守门记录页",
+        "bun test src/findings.test.ts 通过(默认不返回 origin=history)",
+        "/api/findings 无 history 回流项",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "已实现 commit 2739af2。队列降到纯 live 13 条。"
+    },
+    {
+      "id": "US-004",
+      "title": "偏离检测对低信息任务兜底",
+      "description": "As a 用户, I want 任务描述无信息量时明确无法判断偏离, so that 不被假的 drift 0%=安全 误导。",
+      "acceptanceCriteria": [
+        "新增 isLowInfoTask(长度阈值 + 停用词)",
+        "driftScore 对低信息任务返回 null",
+        "buildLive 跳过其 driftFindings 并在 reason 标注任务描述不足以判断偏离",
+        "补单测覆盖低信息任务",
+        "bun test 全过",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "已实现 commit 755633e。"
+    },
+    {
+      "id": "US-005",
+      "title": "POST 空 body 不再挂起",
+      "description": "As a 调用方, I want 空 body 的 POST 立即返回而非挂起 10s, so that 不被网络层 pending 卡住。",
+      "acceptanceCriteria": [
+        "抽 readJsonBody:先 await req.text(),空串按 {},parse 失败 null",
+        "analyze/ask/inbox 三处 POST 改用它",
+        "空 body POST 在 5s 内返回",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "已实现 commit 2501b5f。空 body POST 现 0.01s 返回(原挂起 10s)。"
+    },
+    {
+      "id": "US-006",
+      "title": "Nudge 关闭后会话内持久化",
+      "description": "As a 用户, I want 点过知道了的提醒不要每次切页重弹, so that 产品自己别变成骚扰源。",
+      "acceptanceCriteria": [
+        "知道了/打开对话后写 sessionStorage(键含当前 wake 数)",
+        "同样 wake 数当次会话不再弹",
+        "活动列表 .feed 加 padding-bottom 防 nudge 遮挡",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "已实现 commit 18a18c1。"
+    },
+    {
+      "id": "US-007",
+      "title": "审查队列裁决按钮改 sticky",
+      "description": "As a 用户, I want 读长 diff 时放行/驳回/误报按钮始终可见, so that 不必滚回顶部裁决。",
+      "acceptanceCriteria": [
+        ".qd-actions 加 position:sticky;bottom:0 + 背景 + 顶部阴影",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "已实现 commit 47ec2e7。"
+    },
+    {
+      "id": "US-008",
+      "title": "badge/muted 文字对比度达 WCAG AA",
+      "description": "As a 弱光/视障用户, I want 角标和提示文字看得清, so that 关键信息不被低对比度埋没。",
+      "acceptanceCriteria": [
+        "badge 橙底 #A66A00 改 #8A5800",
+        "muted hint #A39F99 改 #857F79",
+        "index.html 与 app.js 两处旧色值都不再出现",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "已实现 commit 8454060。"
+    },
+    {
+      "id": "US-009",
+      "title": "首页加产品定位句 + 术语 tooltip",
+      "description": "As a 新用户, I want 5 秒看懂这是什么产品, so that 头 5 分钟不一片迷雾。",
+      "acceptanceCriteria": [
+        "hero 加定位句 AI agent 改动守门人 —— 平时放行,关键时刻刹车",
+        "brand-sub 加术语 tooltip(wake-you-up/look-once 解释)",
+        "index.html 加 noscript 定位说明",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "已实现 commit 9271327。已浏览器验证 hero 定位句可见。"
+    },
+    {
+      "id": "US-010",
+      "title": "时间线 tooltip 用真实扫描次数",
+      "description": "As a 用户, I want tooltip 的共 N 次扫描是真实扫描次数, so that 不被 pass+look+wake 混加误导。",
+      "acceptanceCriteria": [
+        "stats.ts timeline 增 eventCount 字段(当天扫描次数)",
+        "app.js tooltip 改用 eventCount,不再混加",
+        "bun test src/stats.test.ts 通过(补 eventCount 断言)",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "已实现 commit 0b07112。"
+    },
+    {
+      "id": "US-011",
+      "title": "导航名与页内 h1 统一为越界记录",
+      "description": "As a 用户, I want 点越界记录进去标题还是越界记录, so that 不以为进错页。",
+      "acceptanceCriteria": [
+        "越界页 h1 与导航名一致,保留越界记录主词",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "已实现 commit 8a0d374。"
+    },
+    {
+      "id": "US-012",
+      "title": "URL hash 深度链接可恢复",
+      "description": "As a 用户, I want 复制 hash 链接能直达、刷新停在原页, so that 深度链接可分享。",
+      "acceptanceCriteria": [
+        "初始化优先读 location.hash.slice(1) 匹配 NAV id",
+        "nav() 同步写 hash;加 hashchange 监听",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "已实现 commit 81d89ca。已浏览器验证全新加载 #audit 直达守门记录。"
+    },
+    {
+      "id": "US-013",
+      "title": "处理 OPTIONS preflight + 补全 CORS 头",
+      "description": "As a 跨端口前端调用方, I want preflight 不被 404 阻断, so that Vite dev 等不同端口下 POST 端点可用。",
+      "acceptanceCriteria": [
+        "handle 入口对 OPTIONS 返回 204 + Access-Control-Allow-Methods/Headers",
+        "JSON_HEADERS 补全 Methods/Headers",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "已实现 commit c41e562。"
+    },
+    {
+      "id": "US-014",
+      "title": "/api/* 未命中返回 JSON 404",
+      "description": "As a 调用方, I want API 404 也是 JSON, so that 客户端能统一解析错误。",
+      "acceptanceCriteria": [
+        "path.startsWith /api/ 未命中返回 {ok:false,reason:Not Found} + JSON_HEADERS + 404",
+        "非 /api/ 路径维持现有静态文件 404",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "已实现 commit 1b05c68。"
+    },
+    {
+      "id": "US-015",
+      "title": "serve 端口占用时友好提示而非栈崩溃",
+      "description": "As a 用户, I want 端口被占用时看到清晰提示, so that 不被 EADDRINUSE 栈吓到。",
+      "acceptanceCriteria": [
+        "startLocalServer try/catch Bun.serve,EADDRINUSE 时打印提示并 exit(1)",
+        "不再打印原始 EADDRINUSE 栈",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "已实现 commit 0759a0a。"
+    },
+    {
+      "id": "US-016",
+      "title": "favicon 不再 404",
+      "description": "As a 用户, I want 控制台不在 console 报 favicon 404, so that 控制台干净无噪音。",
+      "acceptanceCriteria": [
+        "/favicon.ico 返回内联 SVG",
+        "favicon 不返回 404",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "已实现 commit fe32433。"
+    },
+    {
+      "id": "US-017",
+      "title": "/api/daily/today 校验日期格式",
+      "description": "As a 调用方, I want 非法日期返回 400 而非全零 200, so that 能区分零数据与格式错。",
+      "acceptanceCriteria": [
+        "daily/today 加日期格式正则校验,不合法返回 400 JSON",
+        "合法日期行为不变",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "已实现 commit 14815a0。"
+    },
+    {
+      "id": "US-018",
+      "title": "/api/ai/ask 缺 question 返回 400",
+      "description": "As a 调用方, I want 缺 question 返回 400(与 inbox/decision 一致), so that 错误码语义统一。",
+      "acceptanceCriteria": [
+        "ask 缺 question 时返回 status 400 + JSON_HEADERS",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "已实现 commit 14815a0。"
+    },
+    {
+      "id": "US-019",
+      "title": "规则页底部补 inline 引导",
+      "description": "As a 用户, I want 规则页底部别一片空白, so that 知道怎么加规则。",
+      "acceptanceCriteria": [
+        "规则页渲染补如何添加规则引导文字(指向 src/rules.ts)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "已实现 commit 42d70c5。"
+    },
+    {
+      "id": "US-020",
+      "title": "AI 联网调用前显式隐私披露",
+      "description": "As a 注重隐私的用户, I want 发代码给 DeepSeek 前被告知, so that 不在本机只读不联网标语下被意外上云。",
+      "acceptanceCriteria": [
+        "侧边栏标语改为数据本地存储 Ask Guard 联网除外(已在 commit 9271327 完成)",
+        "Ask Guard 对话框打开时输入框上方静态显示发送目标披露(待补)",
+        "所有联网 AI 入口(整理/规则进化/Ask Guard)一致披露(待补)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "部分完成:brand-sub 文案已改(commit 9271327)。剩 Ask Guard 对话框打开时的事前披露文案 + 其余 AI 入口一致披露,尚未做 —— 这是 PRD 里唯一未完成的 story。"
+    }
+  ]
+}

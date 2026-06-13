@@ -67,7 +67,7 @@
   改:`stats.ts` timeline 增 `eventCount`(当天扫描次数);`app.js:~157` tooltip 用 `eventCount` 而非 `pass+look+wake`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/stats.test.ts 2>&1 | grep -q ' 0 fail' && grep -q 'eventCount' src/stats.ts && echo PASS || echo FAIL
 
-- [ ] **P2-3 导航名与页内 h1 统一("越界记录")**
+- [x] **P2-3 导航名与页内 h1 统一("越界记录")**
   改:`web/app.js`/`index.html` 越界页 h1 与导航名一致(保留"越界记录"主词)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -q '越界记录' web/app.js web/index.html && echo PASS || echo FAIL
 

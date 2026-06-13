@@ -91,7 +91,7 @@
   改:`serve-local.ts` `startLocalServer` try/catch `Bun.serve`,EADDRINUSE 时打印"端口 N 已被占用,试 --port N+1"并退出码 1。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4798 >/tmp/v1.log 2>&1 & sleep 2; bun run src/cli.ts serve --port 4798 >/tmp/v2.log 2>&1; lsof -ti :4798 | xargs kill -9 2>/dev/null; grep -Eq '已被占用|in use|--port' /tmp/v2.log && ! grep -q 'EADDRINUSE' /tmp/v2.log && echo PASS || echo FAIL
 
-- [ ] **P3-2 favicon 不再 404**
+- [x] **P3-2 favicon 不再 404**
   改:`serve-local.ts` 对 `/favicon.ico` 返回内联 svg/data-uri 或 204。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' http://127.0.0.1:4799/favicon.ico); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" != "404" && echo "PASS favicon=$C" || echo FAIL
 

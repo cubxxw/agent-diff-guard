@@ -201,6 +201,11 @@ async function handle(req: Request): Promise<Response> {
     return new Response(null, { status: 204, headers: JSON_HEADERS });
   }
 
+  if (path === "/favicon.ico") {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#5D3000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+    return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "max-age=86400" } });
+  }
+
   // ── 守门审计 API:实时聚合 events.jsonl ──
   if (path === "/api/stats/overview") return jsonResponse(overview(readEvents()));
   if (path === "/api/stats/rules") return jsonResponse(ruleRank(readEvents()));

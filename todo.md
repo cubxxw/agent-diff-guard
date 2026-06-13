@@ -27,7 +27,7 @@
   改:`buildQueue` 默认不含 history(或加 `includeHistory` 选项默认 false);queue 仅 live + 必要时 demo。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/findings.test.ts 2>&1 | grep -q ' 0 fail' && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; U=$(curl -s --noproxy '*' http://127.0.0.1:4799/api/findings); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$U" | bun -e 'const it=JSON.parse(await Bun.stdin.text()); const h=it.filter(i=>i.origin==="history"); if(h.length){console.error("FAIL 队列仍含 history 项:",h.length);process.exit(1)} console.log("PASS 队列无 history 回流项,共",it.length,"条")'
 
-- [ ] **P0-4 偏离检测对无信息量/中文任务兜底:任务描述不足时提示"无法判断偏离"而非默认 0% 安全**
+- [x] **P0-4 偏离检测对无信息量/中文任务兜底:任务描述不足时提示"无法判断偏离"而非默认 0% 安全**
   根因:词面匹配对"继续分析解决问题"等中文/短任务无词可匹配 → drift=0% 被当作安全。
   改:`ai.ts`/`findings.ts` 偏离计算前判定任务描述是否"信息量不足"(长度阈值 + 停用词如 继续/修复/解决/重启),
   不足时 drift 返回 null + reason 标注"任务描述不足以判断偏离",前端区别于 0%。补单测。

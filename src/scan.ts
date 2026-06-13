@@ -68,6 +68,31 @@ function taskKeywords(task: string): string[] {
   return Array.from(new Set([...latin, ...cjk]));
 }
 
+// 无信息量的任务停用词:这些词本身不指向任何具体改动范围,
+// 任务描述若只由它们(+ 标点)构成,词面偏离检测无从判断 —— 不能默认"0% 偏离=安全"。
+const LOW_INFO_TOKENS = [
+  "继续", "接着", "修复", "修改", "解决", "问题", "重启", "重新启动", "从新启动", "启动",
+  "优化", "处理", "完成", "实现", "更新", "调整", "下一步", "继续做",
+  "continue", "fix", "fixit", "redo", "retry", "again", "proceed", "resume", "done",
+];
+
+/**
+ * 判断任务描述是否"信息量不足以做偏离检测"。
+ * 触发条件(任一):trim 后过短(<4 字),或抽不出有效关键词,
+ * 或所有关键词都落在停用词表里(如"继续分析解决问题"——全是无指向的动词/名词)。
+ * 这是 P0-4 的核心:低信息任务不应被判 0% 偏离(假安全),而应明确标"无法判断"。
+ */
+export function isLowInfoTask(task: string | undefined): boolean {
+  if (!task) return true;
+  const t = task.trim();
+  if (t.length < 4) return true;
+  const kws = taskKeywords(t);
+  if (kws.length === 0) return true;
+  // 每个关键词若都包含/等于某个停用词,则视为无指向
+  const meaningful = kws.filter((kw) => !LOW_INFO_TOKENS.some((s) => kw === s || kw.includes(s)));
+  return meaningful.length === 0;
+}
+
 /**
  * 偏离检测:声称的任务里一个关键词都没出现在文件路径上的改动 = 可疑的"顺手改"。
  * 保守:只有当 task 非空、且确实有改动文件时才报;命中也只标 look-once,不阻断。

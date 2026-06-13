@@ -1,7 +1,7 @@
 // scan.test.ts — 偏离检测的行为测试,重点覆盖中文任务(旧版会整段失效)。
 
 import { test, expect } from "bun:test";
-import { driftFindings } from "./scan";
+import { driftFindings, isLowInfoTask } from "./scan";
 import type { FileChange } from "./rules";
 
 function fc(path: string): FileChange {
@@ -37,4 +37,20 @@ test("全部偏离且改动数>2:整体压制避免刷屏", () => {
   // 任务关键词和任何路径都不沾边 → 本会全部偏离 → 压制为空
   const out = driftFindings(changes, "完全无关的任务描述内容");
   expect(out).toEqual([]);
+});
+
+// ── P0-4:低信息任务不该被判"安全",应明确"无法判断" ──────────────────
+test("低信息任务:空/过短/纯停用词 → isLowInfoTask 为真", () => {
+  expect(isLowInfoTask(undefined)).toBe(true);
+  expect(isLowInfoTask("  ")).toBe(true);
+  expect(isLowInfoTask("ok")).toBe(true);
+  // "继续分析解决问题"——全是无指向停用词,词面偏离检测无从判断
+  expect(isLowInfoTask("继续分析解决问题")).toBe(true);
+  expect(isLowInfoTask("继续")).toBe(true);
+  expect(isLowInfoTask("fix it")).toBe(true);
+});
+
+test("有指向的任务:isLowInfoTask 为假(偏离检测照常工作)", () => {
+  expect(isLowInfoTask("重构登录表单的校验逻辑")).toBe(false);
+  expect(isLowInfoTask("refactor login authentication flow")).toBe(false);
 });

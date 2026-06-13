@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { runRules, type FileChange, type Finding, type Severity } from "./rules";
-import { parseDiff, driftFindings } from "./scan";
+import { parseDiff, driftFindings, isLowInfoTask } from "./scan";
 import { allTranscripts, type RepoTranscript, type TaskTurn } from "./transcript";
 import { readEvents } from "./logger";
 import type { GuardEvent } from "./event";
@@ -117,10 +117,12 @@ function latestTaskTurn(rt: RepoTranscript): TaskTurn | null {
   return best;
 }
 
-/** 偏离度:复用 driftFindings 的判断 —— 命中 task-drift 的文件占比。 */
+/** 偏离度:复用 driftFindings 的判断 —— 命中 task-drift 的文件占比。
+ *  P0-4:任务描述信息量不足(空 / 过短 / 全是"继续修复解决"这类无指向停用词)时返回 null
+ *  ——「无法判断偏离」,而非默认 0%(假安全)。前端对 null 与 0 区别展示。 */
 function driftScore(changes: FileChange[], task: string | undefined): number | null {
-  if (!task || !task.trim()) return null;
   if (changes.length === 0) return null;
+  if (isLowInfoTask(task)) return null; // 信息量不足 → 不可判,而非"0% 偏离 = 安全"
   const drift = driftFindings(changes, task);
   return Math.min(1, drift.length / changes.length);
 }
@@ -166,14 +168,19 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
     const branch = turn?.gitBranch ?? currentBranch(cwd);
     const repo = rt.project.split("/").slice(-2).join("/");
     const drift = driftScore(changes, task);
+    // P0-4:任务描述信息量不足时,既不算 0% 偏离,也不跑词面 drift(会假命中/假放过)。
+    const lowInfo = isLowInfoTask(task);
 
     // 路径/内容规则命中
     const findings: Finding[] = runRules(changes);
-    // 任务偏离命中(可能给非敏感文件也挂上 look-once)
-    if (task) findings.push(...driftFindings(changes, task));
+    // 任务偏离命中(可能给非敏感文件也挂上 look-once);低信息任务不跑,避免误导
+    if (task && !lowInfo) findings.push(...driftFindings(changes, task));
 
     const byPath = new Map<string, FileChange>();
     for (const c of changes) byPath.set(c.path, c);
+
+    // 任务有内容但信息量不足:给个可读提示,让前端知道 drift=null 是"无法判断"而非"安全"
+    const driftNote = task && lowInfo ? "(任务描述不足以判断偏离 —— 已跳过偏离检测,请人工确认改动范围)" : "";
 
     for (const f of findings) {
       const fc = byPath.get(f.path);
@@ -187,7 +194,7 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
         file: f.path,
         task,
         drift,
-        reason: f.why,
+        reason: driftNote ? `${f.why} ${driftNote}` : f.why,
         timestamp: turn?.timestamp ?? null,
         stats: { add: fc?.addedLines.length ?? 0, del: fc?.removedLines.length ?? 0 },
         diff: fc ? toDiffLines(fc) : [],

@@ -34,6 +34,20 @@ function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
 }
 
+// 安全读取 POST JSON body。
+// 关键:Bun 的 req.json() 在 body 流为空时不抛异常而是一直等待 —— 空 body 的 POST
+// 会挂起约 10s 直到超时(P1-3)。先 await req.text() 拿到字符串,空串按 {} 处理,
+// 再 JSON.parse,从根上避免挂起。parse 失败返回 null,调用方据此回 400。
+async function readJsonBody<T = Record<string, unknown>>(req: Request): Promise<T | null> {
+  const text = await req.text();
+  if (!text.trim()) return {} as T; // 空 body 容忍为 {}
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null; // 畸形 JSON
+  }
+}
+
 // ── 缓存:两层。 ──
 // 底层:sessions 走增量磁盘缓存(sessions-cache.ts),只重解析当天动过的文件 —— 把首跑后的
 //       全量扫描从分钟级压到亚秒级。daily 暂仍全量,但有下面的内存 TTL 兜住重复请求。
@@ -199,14 +213,9 @@ async function handle(req: Request): Promise<Response> {
 
   if (path === "/api/ai/analyze" && req.method === "POST") {
     if (!isAIEnabled()) return jsonResponse({ ok: false, reason: "AI 未启用(未配置 DEEPSEEK_API_KEY)" });
-    // body 可选传 ids[](只分析选中的事件);不传则分析全部。
-    let ids: string[] | undefined;
-    try {
-      const body = (await req.json()) as { ids?: string[] };
-      ids = Array.isArray(body.ids) ? body.ids : undefined;
-    } catch {
-      ids = undefined; // 空 body 容忍
-    }
+    // body 可选传 ids[](只分析选中的事件);不传/空 body 则分析全部。
+    const body = await readJsonBody<{ ids?: string[] }>(req);
+    const ids = body && Array.isArray(body.ids) ? body.ids : undefined;
     const all = readEvents();
     const picked = ids && ids.length > 0 ? all.filter((e) => ids!.includes(e.id)) : all;
     if (picked.length === 0) return jsonResponse({ ok: false, reason: "没有可分析的事件" });
@@ -220,10 +229,8 @@ async function handle(req: Request): Promise<Response> {
   // 不经前端 body 来回。是否带代码上云由 ADG_AI_CLOUD_DEEPCODE 开关 + answerAskGuard 内部裁决。
   if (path === "/api/ai/ask" && req.method === "POST") {
     if (!isAIEnabled()) return jsonResponse({ ok: false, reason: "AI 未启用(未配置 DEEPSEEK_API_KEY)" });
-    let body: { question?: string; route?: string };
-    try {
-      body = (await req.json()) as typeof body;
-    } catch {
+    const body = await readJsonBody<{ question?: string; route?: string }>(req);
+    if (body === null) {
       return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
     }
     const question = typeof body.question === "string" ? body.question.trim() : "";
@@ -282,10 +289,8 @@ async function handle(req: Request): Promise<Response> {
 
   // ── 信箱写入 API:把面板上的用户决策写成指令,等终端 Claude Code 来取 ──
   if (path === "/api/inbox/decision" && req.method === "POST") {
-    let body: { title?: string; action?: string; context?: Record<string, unknown> };
-    try {
-      body = (await req.json()) as typeof body;
-    } catch {
+    const body = await readJsonBody<{ title?: string; action?: string; context?: Record<string, unknown> }>(req);
+    if (body === null) {
       return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
     }
     if (!body.action || typeof body.action !== "string") {

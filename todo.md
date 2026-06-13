@@ -37,9 +37,10 @@
 
 ## 🟠 P1 —— 高优先级体验 / 健壮性
 
-- [ ] **P1-3 `POST /api/ai/analyze` 空 body 不再挂起(先读 text 再 parse)**
-  改:`serve-local.ts` 把 `await req.json()` 改为 `const t=await req.text(); const body=t?JSON.parse(t):{}`(analyze + ask 等所有 POST)。
-  验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -m 5 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:4799/api/ai/analyze); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" != "000" && echo "PASS 空body返回 $C(未挂起)" || echo "FAIL 仍挂起/超时"
+- [x] **P1-3 `POST /api/ai/analyze` 空 body 不再挂起(先读 text 再 parse)**
+  改:`serve-local.ts` 抽 `readJsonBody`(先 `await req.text()`,空串按 `{}`,parse 失败 null),所有 POST 端点用它。
+  注:原验证用 analyze 端点会触发真实 AI 网络调用(AI 已启用)无法隔离 parse,改用 inbox/decision(不触发 AI,确定性)。
+  验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 3; C=$(curl -s --noproxy '*' -m 5 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:4799/api/inbox/decision); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" = "400" && echo "PASS 空body 0.01s 返回 400(未挂起)" || echo "FAIL got $C"
 
 - [ ] **P1-4 Nudge 提醒关闭后持久化,当次会话不再重弹**
   改:`web/app.js` "知道了"写 `sessionStorage`(键含当前 wake count),渲染前检查;活动列表底部留 `padding-bottom`。

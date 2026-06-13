@@ -255,7 +255,8 @@ function render() {
       h("aside", { class: "side" },
         h("div", { class: "brand" },
           h("div", { class: "brand-mark" }, Icon("Shield", 18)),
-          h("div", null, h("div", { class: "brand-name" }, "AGENT-DIFF-GUARD"), h("div", { class: "brand-sub" }, "本机只读 · 不联网"))),
+          h("div", null, h("div", { class: "brand-name" }, "AGENT-DIFF-GUARD"),
+            h("div", { class: "brand-sub", title: "合并前的 AI agent 改动守门人:平时放行,关键时刻刹车。wake-you-up=该半夜叫醒你确认的高危改动;look-once=看一眼即可的常规改动。" }, "数据本地存储 · Ask Guard 联网除外"))),
         h("nav", { class: "nav" }, ...NAV.map((g) =>
           h("div", { class: "nav-group" },
             h("div", { class: "ds-label nav-head" }, g.group),
@@ -354,6 +355,8 @@ const PAGES = {
         Card({ class: "verdict " + (calm ? "verdict-calm" : "verdict-alert") },
           h("div", { class: "verdict-left" },
             h("span", { class: "ds-label verdict-tag" }, calm ? "今日态势 · 平静" : "今日态势 · 需要你"),
+            // 产品定位一句话(P1-7):新用户 5 秒看懂这是什么
+            h("p", { class: "verdict-tagline" }, "AI agent 改动守门人 —— 平时放行,关键时刻刹车。"),
             h("h2", { class: "verdict-h" }, calm ? "没有该惊醒你的东西。" : `有 ${wakeN} 处该看一眼。`),
             h("p", { class: "verdict-p" }, calm
               ? "当前没有待裁决的 wake-you-up。守门人继续安静值守,所有 agent 改动都在安全区内。"

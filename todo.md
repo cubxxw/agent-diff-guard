@@ -54,7 +54,7 @@
   改:badge 背景 `#A66A00→#8A5800`,muted hint `#A39F99→#857F79`(在 index.html/app.js 的 CSS)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && ! grep -iq '#A39F99' web/index.html web/app.js && ! grep -iq '#A66A00' web/index.html web/app.js && echo PASS || echo FAIL
 
-- [ ] **P1-7 首页加一行产品定位说明 + 核心术语 tooltip**
+- [x] **P1-7 首页加一行产品定位说明 + 核心术语 tooltip**
   改:`web/index.html` header/hero 加定位句(如"AI agent 改动守门人:平时放行,关键时刻刹车");
   KPI/术语(wake-you-up 等)加 `title=`/`(?)` tooltip。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -Eq '守门人|平时放行|关键时刻' web/index.html && echo PASS || echo FAIL

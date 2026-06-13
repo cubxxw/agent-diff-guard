@@ -149,6 +149,7 @@ button { font-family:var(--font-body); }
 .verdict-alert::after { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:linear-gradient(var(--error),var(--warning)); }
 .verdict-calm { background:linear-gradient(135deg,var(--success-soft),#F3F7EF); border-color:var(--border-subtle); }
 .verdict-tag { color:var(--fg-subtle); }
+.verdict-tagline { font-size:12.5px; color:var(--fg-muted); margin:6px 0 0; letter-spacing:.2px; } /* 产品定位句(P1-7) */
 .verdict-h { font-family:var(--font-display); font-weight:700; font-size:30px; margin:9px 0 7px; color:var(--fg-primary); letter-spacing:-.3px; }
 .verdict-p { font-size:14.5px; color:var(--fg-muted); margin:0; max-width:560px; line-height:1.6; }
 .verdict-actions { display:flex; gap:10px; margin-top:20px; }
@@ -439,6 +440,8 @@ kbd { font-family:var(--font-mono); font-size:11px; background:var(--surface-sun
 </style>
 </head>
 <body>
+  <!-- 产品定位(P1-7):AI agent 改动守门人 —— 平时放行,关键时刻刹车 -->
+  <noscript>agent-diff-guard:合并前的 AI agent 改动守门人 —— 平时放行,关键时刻刹车。需启用 JavaScript 查看控制台。</noscript>
   <div id="root"></div>
   <div class="toast-wrap" id="toasts"></div>
   <script src="app.js"></script>

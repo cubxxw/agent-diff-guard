@@ -236,13 +236,27 @@ const PAGE_TITLE = {
 };
 
 const state = {
-  route: (() => { try { return localStorage.getItem("adg-route") || "overview"; } catch { return "overview"; } })(),
+  route: (() => {
+    const fromHash = (location.hash || "").replace(/^#/, "").trim();
+    if (fromHash) return fromHash; // URL hash 优先:可深链/分享/刷新恢复(P2-4)
+    try { return localStorage.getItem("adg-route") || "overview"; } catch { return "overview"; }
+  })(),
   decisions: (() => { try { return JSON.parse(localStorage.getItem("adg-decisions") || "{}"); } catch { return {}; } })(),
   cache: {},
   badges: { queue: 0, inbox: 0 },
 };
 function persistDecisions() { try { localStorage.setItem("adg-decisions", JSON.stringify(state.decisions)); } catch {} }
-function nav(r) { state.route = r; try { localStorage.setItem("adg-route", r); } catch {} render(); }
+function nav(r) {
+  state.route = r;
+  try { localStorage.setItem("adg-route", r); } catch {}
+  if (location.hash.replace(/^#/, "") !== r) location.hash = r; // 同步 URL,可分享/前进后退(P2-4)
+  render();
+}
+// 浏览器前进/后退或手改 hash → 跟随切换
+window.addEventListener("hashchange", () => {
+  const r = location.hash.replace(/^#/, "").trim();
+  if (r && r !== state.route) { state.route = r; try { localStorage.setItem("adg-route", r); } catch {} render(); }
+});
 
 /* ============================================================
    6. 应用壳渲染

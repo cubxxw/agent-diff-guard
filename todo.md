@@ -71,7 +71,7 @@
   改:`web/app.js`/`index.html` 越界页 h1 与导航名一致(保留"越界记录"主词)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -q '越界记录' web/app.js web/index.html && echo PASS || echo FAIL
 
-- [ ] **P2-4 URL hash 深度链接可恢复(初始化读 location.hash)**
+- [x] **P2-4 URL hash 深度链接可恢复(初始化读 location.hash)**
   改:`web/app.js` 初始化优先 `location.hash.slice(1)` 匹配 NAV id;`nav()` 同步写 hash。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -q 'location.hash' web/app.js && echo PASS || echo FAIL
 

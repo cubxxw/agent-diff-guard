@@ -103,7 +103,7 @@
   改:`serve-local.ts` ask 缺 question 时 `new Response(...,{status:400,headers:JSON_HEADERS})`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:4799/api/ai/ask); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" = "400" && echo PASS || echo "FAIL got $C"
 
-- [ ] **P3-6 规则页底部空白补 inline 引导("如何添加规则")**
+- [x] **P3-6 规则页底部空白补 inline 引导("如何添加规则")**
   改:`web/app.js` 规则页渲染补一行引导文字 + 链接。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -Eq '如何添加|添加规则|新增规则' web/app.js && echo PASS || echo FAIL
 

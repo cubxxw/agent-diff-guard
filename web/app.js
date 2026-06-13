@@ -586,7 +586,10 @@ function RulesView(rules, findings) {
     h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "12px" } },
       totalFp > 0
         ? F("你已在审查队列标记 ", h("b", null, totalFp), " 处误报。误报率 = 该规则被标误报数 / 该规则在队列出现数 —— 持续偏高的规则应当降级或收窄,否则会被当成狼来了关掉。")
-        : "误报率来自你在审查队列点「标记误报」的反馈,目前为 0。一旦开始标记,这里会显示每条规则的误报压力 —— 这是规则该不该降级的第一手依据。"));
+        : "误报率来自你在审查队列点「标记误报」的反馈,目前为 0。一旦开始标记,这里会显示每条规则的误报压力 —— 这是规则该不该降级的第一手依据。"),
+    h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "8px" } },
+      "如何添加规则:守门规则定义在 ", h("span", { class: "mono" }, "src/rules.ts"),
+      " 的 SENSITIVE_PATH_RULES 表(路径级)与 contentFindings(内容级);每条带 severity:wake-you-up 或 look-once。"));
 }
 
 const flightOpen = new Set();

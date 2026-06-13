@@ -7,6 +7,8 @@
 set -e
 set -o pipefail
 
+export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
+
 MAX_ITERATIONS=10
 
 while [[ $# -gt 0 ]]; do

@@ -14,3 +14,4 @@ Tool: claude
 - Server is `src/serve-local.ts` using `Bun.serve`
 - Test framework: `bun test` (TypeScript, with `.test.ts` files)
 - AI disclosure text for Ask Guard dialog is around line 1198 in `web/app.js`
+[2026-06-13T10:35:36Z] Story #US-020: AI 联网调用前显式隐私披露 — PASSED

@@ -50,7 +50,7 @@
   改:`web/index.html`/`app.js` 的 `.qd-actions` 加 `position:sticky;bottom:0` + 背景/阴影。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -A4 '\.qd-actions' web/index.html web/app.js 2>/dev/null | grep -q 'sticky' && echo PASS || echo FAIL
 
-- [ ] **P1-6 通知 badge / muted 文字对比度达 WCAG AA**
+- [x] **P1-6 通知 badge / muted 文字对比度达 WCAG AA**
   改:badge 背景 `#A66A00→#8A5800`,muted hint `#A39F99→#857F79`(在 index.html/app.js 的 CSS)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && ! grep -iq '#A39F99' web/index.html web/app.js && ! grep -iq '#A66A00' web/index.html web/app.js && echo PASS || echo FAIL
 

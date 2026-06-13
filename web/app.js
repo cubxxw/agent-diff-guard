@@ -671,8 +671,8 @@ function DangerDetail(z) {
 // 晶点卡 HTML(所有样式必须内联 —— foreignObject 截图不继承外部样式表)。
 // 配色直接写死琥珀棕设计 token 的十六进制,与面板一致。
 function usageCardHTML(day, isToday) {
-  const C = { bg: "#FAF8F6", surface: "#FFFFFF", fg: "#2B2822", muted: "#6B6560", subtle: "#A39F99",
-    accent: "#5D3000", accentSoft: "#F5EDE3", border: "#EDE8DF", warn: "#A66A00", succ: "#4C7A3F" };
+  const C = { bg: "#FAF8F6", surface: "#FFFFFF", fg: "#2B2822", muted: "#6B6560", subtle: "#857F79",
+    accent: "#5D3000", accentSoft: "#F5EDE3", border: "#EDE8DF", warn: "#8A5800", succ: "#4C7A3F" }; /* P1-6:对比度达标 */
   const mono = "'SF Mono','JetBrains Mono',ui-monospace,Menlo,monospace";
   const disp = "'Space Grotesk',system-ui,-apple-system,sans-serif";
   const fmtKLocal = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(Math.round(n)));

@@ -99,7 +99,7 @@
   改:`serve-local.ts` daily/today 加 `/^\d{4}-\d{2}-\d{2}$/` 校验,不合法 400 JSON。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:4799/api/daily/today?date=bad"); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" = "400" && echo PASS || echo "FAIL got $C"
 
-- [ ] **P3-4 `/api/ai/ask` 缺 question 返回 400(与其他 POST 一致)**
+- [x] **P3-4 `/api/ai/ask` 缺 question 返回 400(与其他 POST 一致)**
   改:`serve-local.ts` ask 缺 question 时 `new Response(...,{status:400,headers:JSON_HEADERS})`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; C=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:4799/api/ai/ask); lsof -ti :4799 | xargs kill -9 2>/dev/null; test "$C" = "400" && echo PASS || echo "FAIL got $C"
 

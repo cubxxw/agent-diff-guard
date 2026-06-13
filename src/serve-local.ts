@@ -343,6 +343,9 @@ async function handle(req: Request): Promise<Response> {
     return new Response(Bun.file(candidate));
   }
 
+  if (path.startsWith("/api/")) {
+    return new Response(JSON.stringify({ ok: false, reason: "Not Found" }), { status: 404, headers: JSON_HEADERS });
+  }
   return new Response("Not Found", { status: 404 });
 }
 

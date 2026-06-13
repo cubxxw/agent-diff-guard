@@ -79,7 +79,7 @@
   改:`serve-local.ts` `handle` 入口对 `OPTIONS` 返回 204 + `Access-Control-Allow-Methods/Headers`;`JSON_HEADERS` 补 Methods/Headers。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; H=$(curl -s --noproxy '*' -i -X OPTIONS http://127.0.0.1:4799/api/inbox/decision); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$H" | grep -qi 'Access-Control-Allow-Methods' && echo PASS || echo FAIL
 
-- [ ] **P2-6 `/api/*` 未命中路由返回 JSON 404(而非纯文本)**
+- [x] **P2-6 `/api/*` 未命中路由返回 JSON 404(而非纯文本)**
   改:`serve-local.ts` 对 `path.startsWith("/api/")` 未命中返回 `{ok:false,reason:"Not Found"}` + JSON_HEADERS + 404。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; B=$(curl -s --noproxy '*' http://127.0.0.1:4799/api/nonsense); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$B" | grep -q '"ok":false' && echo PASS || echo FAIL
 

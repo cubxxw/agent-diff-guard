@@ -280,8 +280,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": "部分完成:brand-sub 文案已改(commit 9271327)。剩 Ask Guard 对话框打开时的事前披露文案 + 其余 AI 入口一致披露,尚未做 —— 这是 PRD 里唯一未完成的 story。"
+      "passes": true,
+      "notes": "已完成(commit f70d276):Ask Guard 对话框 ask-foot 输入框上方新增静态 .ask-disclose,按 aiEnabled 区分联网(DeepSeek·api.deepseek.com)/本机两种发送目标披露;ai.ts 导出 NETWORK_DISCLOSURE,serve-local 三个联网入口(/api/ai/analyze 整理、/api/insights/analyze 规则进化、/api/ai/ask Ask Guard)成功响应统一带 disclosure。brand-sub 文案此前已在 commit 9271327 改。browser 验证(playwright):本机变体 ask-disclose local、联网变体 ask-disclose net 均正确渲染且位于输入框上方。bun test 80 pass / tsc 通过。"
     }
   ]
 }

@@ -63,7 +63,7 @@
 
 ## 🟡 P2 —— 中优先级一致性 / 正确性
 
-- [ ] **P2-2 时间线 tooltip 不再混加单位(用真实扫描次数)**
+- [x] **P2-2 时间线 tooltip 不再混加单位(用真实扫描次数)**
   改:`stats.ts` timeline 增 `eventCount`(当天扫描次数);`app.js:~157` tooltip 用 `eventCount` 而非 `pass+look+wake`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/stats.test.ts 2>&1 | grep -q ' 0 fail' && grep -q 'eventCount' src/stats.ts && echo PASS || echo FAIL
 

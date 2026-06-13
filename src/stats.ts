@@ -19,6 +19,7 @@ export interface TimelineRow {
   wakeCount: number;
   lookCount: number;
   passCount: number; // disposition === auto-pass 的事件数
+  eventCount: number; // 当天实际扫描次数(= 事件数)。tooltip 用它,不要 wake+look+pass 混加(单位不同)
 }
 
 export interface DispositionRow {
@@ -56,9 +57,10 @@ export function timeline(events: GuardEvent[]): TimelineRow[] {
   const map = new Map<string, TimelineRow>();
   for (const ev of events) {
     const date = ev.timestamp.slice(0, 10); // YYYY-MM-DD
-    const row = map.get(date) ?? { date, wakeCount: 0, lookCount: 0, passCount: 0 };
+    const row = map.get(date) ?? { date, wakeCount: 0, lookCount: 0, passCount: 0, eventCount: 0 };
     row.wakeCount += ev.summary.wakeCount;
     row.lookCount += ev.summary.lookCount;
+    row.eventCount++; // 每个事件 = 一次扫描
     if (ev.disposition === "auto-pass") row.passCount++;
     map.set(date, row);
   }

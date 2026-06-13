@@ -153,8 +153,9 @@ function RiskBars(rows, height = 132, onPick) {
     });
     // 透明 hit 区:覆盖整列高度,hover 出数值 tooltip,点击可下钻(onPick)
     const hit = svg("rect", { x: x - (step - bw) / 2, y: P, width: step, height: H - P * 2, fill: "transparent", class: onPick ? "chart-hit" : "" });
-    const total = r.pass + r.look + r.wake;
-    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${r.date}</b><br>wake ${r.wake} · look ${r.look} · 放行 ${r.pass}<br>共 ${total} 次扫描`));
+    // 共 N 次扫描:用当天真实扫描次数(eventCount),不要把 wake/look(命中数,单位不同)与 pass 混加(P2-2)
+    const scans = r.event != null ? r.event : r.pass;
+    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${r.date}</b><br>wake ${r.wake} · look ${r.look} · 放行 ${r.pass}<br>共 ${scans} 次扫描`));
     hit.addEventListener("mouseleave", hideTip);
     if (onPick) hit.addEventListener("click", () => { hideTip(); onPick(r); });
     root.appendChild(hit);
@@ -341,7 +342,7 @@ const PAGES = {
       const wakeN = pending.filter((f) => f.level === "wake").length;
       const lookN = pending.filter((f) => f.level === "look").length;
       const calm = wakeN === 0;
-      const rows = tl.map((r) => ({ date: r.date, pass: r.passCount, look: r.lookCount, wake: r.wakeCount })).slice(-14);
+      const rows = tl.map((r) => ({ date: r.date, pass: r.passCount, look: r.lookCount, wake: r.wakeCount, event: r.eventCount })).slice(-14);
       const activity = disp.slice(0, 6).map((d) => ({
         id: d.id,
         time: fmtTime(d.timestamp),

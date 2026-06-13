@@ -44,6 +44,18 @@ test("timeline: 按天聚合,日期升序", () => {
   expect(t.map((x) => x.date)).toEqual(["2026-06-09", "2026-06-10"]);
   expect(t[0]!.wakeCount).toBe(2);
   expect(t[1]!.passCount).toBe(1);
+  expect(t[0]!.eventCount).toBe(1);
+  expect(t[1]!.eventCount).toBe(1);
+});
+
+test("timeline: eventCount 是扫描次数,与 wakeCount 解耦", () => {
+  const events = [
+    ev({ timestamp: "2026-06-11T08:00:00.000Z", summary: { totalFilesChanged: 1, wakeCount: 2, lookCount: 0, rulesTriggered: [] }, disposition: "blocked" }),
+    ev({ timestamp: "2026-06-11T09:00:00.000Z", summary: { totalFilesChanged: 1, wakeCount: 0, lookCount: 0, rulesTriggered: [] }, disposition: "auto-pass" }),
+  ];
+  const t = timeline(events);
+  expect(t).toHaveLength(1);
+  expect(t[0]!.eventCount).toBe(2);
 });
 
 test("dispositions: 时间倒序", () => {

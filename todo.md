@@ -22,7 +22,7 @@
   保留 `hardcoded-secret`/`test-deleted`/`ci-pipeline`(任务无关时)为 `wake-you-up`。补/改对应单测。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/rules.test.ts 2>&1 | grep -q ' 0 fail' && grep -q '"look-once"' src/rules.ts && test $(grep -c 'severity: "look-once"' src/rules.ts) -ge 1 && echo PASS || echo FAIL
 
-- [ ] **P0-3 审查队列只放 live(当下未 push);history 不再回流伪装成"待裁决"**
+- [x] **P0-3 审查队列只放 live(当下未 push);history 不再回流伪装成"待裁决"**
   根因:`buildHistory` 把所有 `blocked` 历史 wake 全回流,15 天前已合并的改动还在"等裁决",diff 正文已无。
   改:`buildQueue` 默认不含 history(或加 `includeHistory` 选项默认 false);queue 仅 live + 必要时 demo。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/findings.test.ts 2>&1 | grep -q ' 0 fail' && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; U=$(curl -s --noproxy '*' http://127.0.0.1:4799/api/findings); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$U" | bun -e 'const it=JSON.parse(await Bun.stdin.text()); const h=it.filter(i=>i.origin==="history"); if(h.length){console.error("FAIL 队列仍含 history 项:",h.length);process.exit(1)} console.log("PASS 队列无 history 回流项,共",it.length,"条")'

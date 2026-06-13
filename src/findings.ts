@@ -131,6 +131,13 @@ export interface BuildQueueOpts {
   events?: GuardEvent[];
   /** 关掉 demo 兜底(测试用,验证 live/history 为空时确实返回空) */
   noDemo?: boolean;
+  /**
+   * 是否把"过去被刹住"的历史回流进队列。默认 false ——
+   * 审查队列只放 live(当下未 push、能真正裁决、有 diff 正文)。
+   * history 已被刹住/已合并,对它点"放行/驳回"无意义;它的聚合数据(aggregateHistory)
+   * 改由"守门记录"页消费。设 true 才回流(测试/特殊视图用)。
+   */
+  includeHistory?: boolean;
 }
 
 /**
@@ -326,14 +333,17 @@ function sortQueue(items: QueueFinding[]): QueueFinding[] {
 }
 
 /**
- * 合成审查队列:live(当下 git diff)+ history(events 回流被刹住),
- * 两者都空时返回 demo 兜底种子。同一 file+rule 优先保留 live(有正文)。
+ * 合成审查队列:默认只放 live(当下 git diff,能真正裁决、有正文)。
+ * history(过去被刹住)默认不回流 —— 它已被刹住/已合并,对它裁决无意义,
+ * 其聚合数据交给"守门记录"页(aggregateHistory)。仅 includeHistory:true 时回流。
+ * live(+history)都空时返回 demo 兜底种子。同一 file+rule 优先保留 live(有正文)。
  */
 export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
   const transcripts = o.transcripts ?? allTranscripts();
   const live = buildLive(transcripts);
-  const events = o.events ?? readEvents();
-  const history = aggregateHistory(events);
+
+  // 默认队列只放 live;history 仅在显式 includeHistory 时回流
+  const history = o.includeHistory ? aggregateHistory(o.events ?? readEvents()) : [];
 
   // 去重:live 已覆盖的 file+rule 不再用 history 重复列(live 有正文,更优)
   const liveKeys = new Set(live.map((f) => `${f.repo}:${f.rule}:${f.file}`));

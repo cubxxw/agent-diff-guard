@@ -28,8 +28,14 @@ function blockedEvent(over: Partial<GuardEvent> = {}): GuardEvent {
 }
 
 describe("buildQueue 三源合成", () => {
-  test("history 回流:blocked 事件的 wake 命中变成 origin=history 队列项", () => {
-    const q = buildQueue({ transcripts: [], events: [blockedEvent()], noDemo: true });
+  test("默认不回流 history:仅 includeHistory 才把 blocked 历史放进队列", () => {
+    // 默认(includeHistory 省略):history 不进队列 → 空 live + 空 = demo 兜底关掉后为空
+    const def = buildQueue({ transcripts: [], events: [blockedEvent()], noDemo: true });
+    expect(def).toEqual([]);
+  });
+
+  test("history 回流:includeHistory:true 时 blocked 事件的 wake 命中变成 origin=history 队列项", () => {
+    const q = buildQueue({ transcripts: [], events: [blockedEvent()], noDemo: true, includeHistory: true });
     expect(q.length).toBe(1);
     const f = q[0]!;
     expect(f.origin).toBe("history");
@@ -48,7 +54,7 @@ describe("buildQueue 三源合成", () => {
       id: "01LOOK",
       findings: [{ rule: "dependency-manifest", severity: "look-once", path: "package.json", whySummary: "依赖变更", hasEvidence: false }],
     });
-    const q = buildQueue({ transcripts: [], events: [passed, lookOnly], noDemo: true });
+    const q = buildQueue({ transcripts: [], events: [passed, lookOnly], noDemo: true, includeHistory: true });
     expect(q.length).toBe(0);
   });
 
@@ -71,7 +77,7 @@ describe("buildQueue 三源合成", () => {
     const e1 = blockedEvent({ id: "01HIT1", timestamp: "2026-06-08T01:00:00.000Z" });
     const e2 = blockedEvent({ id: "01HIT2", timestamp: "2026-06-09T01:00:00.000Z" });
     const e3 = blockedEvent({ id: "01HIT3", timestamp: "2026-06-10T01:00:00.000Z" });
-    const q = buildQueue({ transcripts: [], events: [e3, e1, e2], noDemo: true });
+    const q = buildQueue({ transcripts: [], events: [e3, e1, e2], noDemo: true, includeHistory: true });
     expect(q.length).toBe(1);
     const f = q[0]!;
     expect(f.hitCount).toBe(3);
@@ -88,7 +94,7 @@ describe("buildQueue 三源合成", () => {
         { rule: "hardcoded-secret", severity: "wake-you-up", path: "a.ts", whySummary: "密钥", hasEvidence: false },
       ],
     });
-    const q = buildQueue({ transcripts: [], events: [twoWake], noDemo: true });
+    const q = buildQueue({ transcripts: [], events: [twoWake], noDemo: true, includeHistory: true });
     expect(q.length).toBe(2);
     expect(q.every((f) => f.level === "wake")).toBe(true);
   });

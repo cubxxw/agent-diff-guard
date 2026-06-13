@@ -46,7 +46,7 @@
   改:`web/app.js` "知道了"写 `sessionStorage`(键含当前 wake count),渲染前检查;活动列表底部留 `padding-bottom`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -Eq 'sessionStorage|localStorage' web/app.js && grep -Eq 'nudge|dismiss' web/app.js && echo PASS || echo FAIL
 
-- [ ] **P1-5 审查队列裁决按钮(放行/驳回/误报)改 sticky,长 diff 滚动不丢失操作区**
+- [x] **P1-5 审查队列裁决按钮(放行/驳回/误报)改 sticky,长 diff 滚动不丢失操作区**
   改:`web/index.html`/`app.js` 的 `.qd-actions` 加 `position:sticky;bottom:0` + 背景/阴影。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -A4 '\.qd-actions' web/index.html web/app.js 2>/dev/null | grep -q 'sticky' && echo PASS || echo FAIL
 

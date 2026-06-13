@@ -863,6 +863,17 @@ const ai = {
   nudgeShown: false, nudgeDismissed: false,
 };
 
+// nudge 关闭持久化(P1-4):键里带"关闭时的 wake 数",当次会话内同样数量不再重弹;
+// 数量变化(出现新的待裁决)才允许再探一次。用 sessionStorage —— 关页即清,不跨会话压制。
+const NUDGE_KEY = "adg-nudge-dismissed-wake";
+function nudgeDismissedFor(wakeCount) {
+  try { return sessionStorage.getItem(NUDGE_KEY) === String(wakeCount); } catch { return false; }
+}
+function dismissNudge(wakeCount) {
+  ai.nudgeDismissed = true;
+  try { sessionStorage.setItem(NUDGE_KEY, String(wakeCount)); } catch {}
+}
+
 // 跨数据源搜索的导航表(对齐 NAV)
 const PAL_NAV = [
   { id: "overview", label: "总览", en: "OVERVIEW", icon: "Shield", kw: "zonglan overview" },
@@ -888,7 +899,7 @@ function renderOverlays() {
   root.appendChild(F(
     ai.palOpen && CommandPalette(),
     ai.askOpen && AskGuard(),
-    !ai.askOpen && ai.nudgeShown && !ai.nudgeDismissed && CompanionNudge(),
+    !ai.askOpen && ai.nudgeShown && !ai.nudgeDismissed && !nudgeDismissedFor(pendingWakeCount()) && CompanionNudge(),
     CompanionOrb(),
   ));
 }
@@ -1178,7 +1189,7 @@ function AskGuard() {
         h("button", { class: "ask-send", onClick: () => { askSend(inp.value); inp.value = ""; }, "aria-label": "发送" }, Icon("ArrowUp", 16)))));
 }
 function openAsk(seed) {
-  ai.askOpen = true; ai.nudgeDismissed = true;
+  ai.askOpen = true; dismissNudge(pendingWakeCount());
   renderOverlays();
   ensureAiData().then(() => { if (seed) askSend(seed); });
 }
@@ -1201,7 +1212,7 @@ function CompanionNudge() {
   const pw = pendingWakeCount();
   if (pw <= 0) return false;
   return h("div", { class: "comp-nudge", role: "status" },
-    h("button", { class: "comp-nudge-x", onClick: () => { ai.nudgeDismissed = true; renderOverlays(); }, "aria-label": "知道了" }, Icon("X", 13)),
+    h("button", { class: "comp-nudge-x", onClick: () => { dismissNudge(pendingWakeCount()); renderOverlays(); }, "aria-label": "知道了" }, Icon("X", 13)),
     h("div", { class: "comp-nudge-head" }, h("span", { class: "comp-nudge-dot" }), "守门人提醒"),
     h("p", { class: "comp-nudge-p" }, F("审查队列里有 ", h("b", null, pw + " 条 wake"), " 在等你裁决 —— 有几条看着像同一次改动顺手干的。要我说说吗?")),
     h("button", { class: "comp-nudge-cta", onClick: () => openAsk("这批为什么被刹住?") }, "看看怎么回事 ", Icon("ArrowRight", 13)));
@@ -1212,7 +1223,11 @@ function scheduleNudge() {
   setTimeout(() => {
     if (ai.askOpen || ai.nudgeDismissed) return;
     ensureAiData().then(() => {
-      if (pendingWakeCount() > 0 && !ai.askOpen && !ai.nudgeDismissed) { ai.nudgeShown = true; renderOverlays(); }
+      const wc = pendingWakeCount();
+      // 当次会话已对同样 wake 数关闭过 → 不再重弹(P1-4)
+      if (wc > 0 && !ai.askOpen && !ai.nudgeDismissed && !nudgeDismissedFor(wc)) {
+        ai.nudgeShown = true; renderOverlays();
+      }
     });
   }, 3500);
 }

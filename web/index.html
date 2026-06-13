@@ -156,7 +156,7 @@ button { font-family:var(--font-body); }
 .verdict-big { font-family:var(--font-mono); font-size:58px; font-weight:500; color:var(--error); line-height:1; letter-spacing:-1px; }
 .verdict-calm .verdict-big { color:var(--success); }
 .verdict-sub { font-family:var(--font-mono); font-size:13px; color:var(--warning); }
-.feed { display:flex; flex-direction:column; }
+.feed { display:flex; flex-direction:column; padding-bottom:180px; } /* 给右下 nudge 浮层让位,避免遮挡末几条活动(P1-4) */
 .feed-row { display:flex; gap:11px; padding:10px 0; border-bottom:1px solid var(--border-subtle); }
 .feed-row:last-child { border-bottom:none; padding-bottom:0; } .feed-row:first-child { padding-top:0; }
 .feed .dot { margin-top:6px; }

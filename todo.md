@@ -11,7 +11,7 @@
 
 ## 🔴 P0 —— 伤及"宁可漏不可烦"核心承诺
 
-- [ ] **P0-1 审查队列按 `repo:rule:file` 聚合,history 内部去重(同一处只出一条,显示命中次数)**
+- [x] **P0-1 审查队列按 `repo:rule:file` 聚合,history 内部去重(同一处只出一条,显示命中次数)**
   根因:`findings.ts:307-311` 去重只在 live↔history 之间,history 内部不去重,`src/config.ts` 被列 6 次。
   改:`buildQueue` 对 history 先按 `repo:rule:file` 聚合(保留最近一条 + `hitCount`/`firstSeen`),再与 live 去重。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/findings.test.ts 2>&1 | grep -q ' 0 fail' && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; U=$(curl -s --noproxy '*' http://127.0.0.1:4799/api/findings); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$U" | bun -e 'const it=JSON.parse(await Bun.stdin.text()); const f={}; for(const i of it){const k=(i.repo||"")+":"+(i.rule||"")+":"+(i.file||i.path||"");f[k]=(f[k]||0)+1;} const dup=Object.entries(f).filter(([,n])=>n>1); if(dup.length){console.error("FAIL 仍有重复:",dup);process.exit(1)} console.log("PASS 队列无重复 file@rule")'

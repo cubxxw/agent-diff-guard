@@ -58,6 +58,10 @@ export interface QueueFinding {
   stats: { add: number; del: number };
   /** diff 片段(最多若干行,正文只流给本机) */
   diff: DiffLine[];
+  /** 同一处(repo:rule:file)被刹住的次数;history 聚合后 >1,live/demo 省略(默认 1) */
+  hitCount?: number;
+  /** 同一处最早一次被刹的时间 ISO(history 聚合产物) */
+  firstSeen?: string | null;
 }
 
 const MAX_DIFF_LINES = 40;
@@ -196,16 +200,41 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
  * 所以 history 项 diff 为空、stats 取自 summary、task 只能给 hash 化的占位说明。
  * 只回流 wake-you-up 级 findings(对齐"宁可漏不可烦":历史 look-once 不再翻旧账)。
  */
-function buildHistory(events: GuardEvent[]): QueueFinding[] {
-  const out: QueueFinding[] = [];
-  for (const ev of events) {
+/**
+ * 把"被刹住"的历史事件回流成队列项,并按 repo:rule:file 聚合 ——
+ * 同一处被刹 N 次只出一条,带 hitCount(命中次数)和 firstSeen(最早时间),
+ * 展示用最近一次的元数据。修复"src/config.ts 被列 6 次"的告警疲劳。
+ *
+ * 导出供"守门记录"页复用:队列默认不放 history(见 buildQueue),
+ * 但守门记录页要展示"过去被刹住的、已聚合的"全量。
+ *
+ * 隐私铁律:events 只存元数据(rule/path/severity/whySummary),没有 diff 正文 ——
+ * 所以聚合项 diff 为空、stats 取自 summary、task 只给 hash 化的占位说明。
+ * 只回流 wake-you-up 级 findings(对齐"宁可漏不可烦":历史 look-once 不再翻旧账)。
+ */
+export function aggregateHistory(events: GuardEvent[]): QueueFinding[] {
+  // key = repo:rule:file → 聚合;按时间升序遍历,保证 firstSeen 是最早、展示取最近
+  const byKey = new Map<string, QueueFinding>();
+  const sorted = [...events].sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""));
+
+  for (const ev of sorted) {
     // 只回流"被刹住"的事件里的 wake 命中 —— 这些是真正该被人裁决的
     if (ev.disposition !== "blocked") continue;
     const repo = (ev.repoRemote ?? "(本地仓库)").split("/").slice(-2).join("/");
     for (const f of ev.findings) {
       if (f.severity !== "wake-you-up") continue;
-      out.push({
-        id: `hist:${ev.id}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
+      const key = `${repo}:${f.rule}:${f.path}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        // 同一处再次被刹:累加次数,展示数据更新为最近一次(sorted 升序 → ev 更新)
+        existing.hitCount = (existing.hitCount ?? 1) + 1;
+        existing.timestamp = ev.timestamp;
+        existing.reason = f.whySummary;
+        existing.task = ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,原文未留存)` : "";
+        continue;
+      }
+      byKey.set(key, {
+        id: `hist:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
         origin: "history",
         level: LEVEL[f.severity],
         rule: f.rule,
@@ -219,10 +248,12 @@ function buildHistory(events: GuardEvent[]): QueueFinding[] {
         timestamp: ev.timestamp,
         stats: { add: 0, del: 0 },
         diff: [], // 隐私铁律:历史无正文可重放
+        hitCount: 1,
+        firstSeen: ev.timestamp,
       });
     }
   }
-  return out;
+  return [...byKey.values()];
 }
 
 /**
@@ -302,7 +333,7 @@ export function buildQueue(o: BuildQueueOpts = {}): QueueFinding[] {
   const transcripts = o.transcripts ?? allTranscripts();
   const live = buildLive(transcripts);
   const events = o.events ?? readEvents();
-  const history = buildHistory(events);
+  const history = aggregateHistory(events);
 
   // 去重:live 已覆盖的 file+rule 不再用 history 重复列(live 有正文,更优)
   const liveKeys = new Set(live.map((f) => `${f.repo}:${f.rule}:${f.file}`));

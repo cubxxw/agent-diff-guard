@@ -66,6 +66,20 @@ describe("buildQueue 三源合成", () => {
     expect(q).toEqual([]);
   });
 
+  test("聚合去重:同一 repo:rule:file 被刹多次只出 1 条,hitCount 累加", () => {
+    // 三次 blocked,同一处 README.md@hardcoded-secret(默认 blockedEvent 即此)
+    const e1 = blockedEvent({ id: "01HIT1", timestamp: "2026-06-08T01:00:00.000Z" });
+    const e2 = blockedEvent({ id: "01HIT2", timestamp: "2026-06-09T01:00:00.000Z" });
+    const e3 = blockedEvent({ id: "01HIT3", timestamp: "2026-06-10T01:00:00.000Z" });
+    const q = buildQueue({ transcripts: [], events: [e3, e1, e2], noDemo: true });
+    expect(q.length).toBe(1);
+    const f = q[0]!;
+    expect(f.hitCount).toBe(3);
+    // firstSeen 取最早,timestamp(展示)取最近 —— 与事件乱序输入无关
+    expect(f.firstSeen).toBe("2026-06-08T01:00:00.000Z");
+    expect(f.timestamp).toBe("2026-06-10T01:00:00.000Z");
+  });
+
   test("排序:wake 在 look 之前", () => {
     const twoWake = blockedEvent({
       id: "01MULTI",

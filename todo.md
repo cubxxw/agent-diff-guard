@@ -75,7 +75,7 @@
   改:`web/app.js` 初始化优先 `location.hash.slice(1)` 匹配 NAV id;`nav()` 同步写 hash。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -q 'location.hash' web/app.js && echo PASS || echo FAIL
 
-- [ ] **P2-5 处理 OPTIONS preflight + 补全 CORS 头**
+- [x] **P2-5 处理 OPTIONS preflight + 补全 CORS 头**
   改:`serve-local.ts` `handle` 入口对 `OPTIONS` 返回 204 + `Access-Control-Allow-Methods/Headers`;`JSON_HEADERS` 补 Methods/Headers。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4799 >/tmp/v.log 2>&1 & sleep 2; H=$(curl -s --noproxy '*' -i -X OPTIONS http://127.0.0.1:4799/api/inbox/decision); lsof -ti :4799 | xargs kill -9 2>/dev/null; echo "$H" | grep -qi 'Access-Control-Allow-Methods' && echo PASS || echo FAIL
 

@@ -28,6 +28,8 @@ import { repoHistory, staticZones } from "./context";
 const JSON_HEADERS = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*", // 本地面板跨端口读取
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 function jsonResponse(data: unknown): Response {
@@ -192,6 +194,12 @@ function webDir(): string {
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
+
+  // CORS preflight:跨端口前端(如 Vite dev)对带 Content-Type 的 POST 会先发 OPTIONS,
+  // 必须回 204 + 完整 CORS 头,否则 POST 端点(ai/ask、inbox/decision)被浏览器阻断(P2-5)。
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: JSON_HEADERS });
+  }
 
   // ── 守门审计 API:实时聚合 events.jsonl ──
   if (path === "/api/stats/overview") return jsonResponse(overview(readEvents()));

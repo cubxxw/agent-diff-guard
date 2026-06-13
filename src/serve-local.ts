@@ -16,7 +16,7 @@ import { projectUsage, usageOverview, recentSessions } from "./sessions";
 import { cachedAllSessions } from "./sessions-cache";
 import { dailyStats, dayStat } from "./daily";
 import { cachedAllRecords } from "./daily-cache";
-import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights, answerAskGuard, deepCodeAllowed, type AskGuardContext } from "./ai";
+import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights, answerAskGuard, deepCodeAllowed, NETWORK_DISCLOSURE, type AskGuardContext } from "./ai";
 import { allTranscripts } from "./transcript";
 import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
@@ -234,7 +234,7 @@ async function handle(req: Request): Promise<Response> {
     if (picked.length === 0) return jsonResponse({ ok: false, reason: "没有可分析的事件" });
     const result = await analyzeEvents(buildAnalysisInput(picked));
     if (!result) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级,不影响面板)" });
-    return jsonResponse({ ok: true, analyzedCount: picked.length, ...result });
+    return jsonResponse({ ok: true, analyzedCount: picked.length, disclosure: NETWORK_DISCLOSURE, ...result });
   }
 
   // ── Ask Guard API:面板「问守门人」的 DeepSeek 后端 ──
@@ -266,7 +266,10 @@ async function handle(req: Request): Promise<Response> {
     };
     const reply = await answerAskGuard(question, ctx);
     if (!reply) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级到本机问答)" });
-    return jsonResponse({ ok: true, deepCode: deepCodeAllowed(), ...reply });
+    const askDisclosure = deepCodeAllowed()
+      ? "联网披露:问题与元数据发送到 DeepSeek(api.deepseek.com);「含代码」开关已开,代码正文也会上云。"
+      : NETWORK_DISCLOSURE;
+    return jsonResponse({ ok: true, deepCode: deepCodeAllowed(), disclosure: askDisclosure, ...reply });
   }
 
   // ── 闭环洞察 API:从"任务→改动"历史挖规则进化信号 ──
@@ -281,7 +284,7 @@ async function handle(req: Request): Promise<Response> {
     if (insights.length === 0) return jsonResponse({ ok: false, reason: "还没有足够的'任务→改动'历史可分析" });
     const result = await analyzeInsights(insights);
     if (!result) return jsonResponse({ ok: false, reason: "AI 分析失败或超时(已降级)" });
-    return jsonResponse({ ok: true, repoCount: insights.length, ...result });
+    return jsonResponse({ ok: true, repoCount: insights.length, disclosure: NETWORK_DISCLOSURE, ...result });
   }
 
   // ── 飞行记录·越界 API:agent 有没有违反人定下的规矩(确定性检测,不调 AI) ──

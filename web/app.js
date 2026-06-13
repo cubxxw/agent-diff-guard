@@ -1205,6 +1205,11 @@ function AskGuard() {
       h("span", { class: "ask-ctx-note" }, state.cache.aiEnabled ? "DeepSeek 已连接 · 失败自动降级本机" : "本机接地 · 零上传 · 不动手")),
     body,
     h("div", { class: "ask-foot" },
+      state.cache.aiEnabled
+        ? h("div", { class: "ask-disclose net" }, Icon("Cloud", 12),
+            h("span", null, "发送目标:DeepSeek(api.deepseek.com)。提问与元数据会联网上云;代码正文仅在你显式开启「含代码」时才上传。"))
+        : h("div", { class: "ask-disclose local" }, Icon("HardDrive", 12),
+            h("span", null, "发送目标:本机接地问答。未配置 DeepSeek,问题不出本机、零上传。")),
       empty && h("div", { class: "ask-chips" }, ...suggestions.map((s) => h("button", { class: "ask-chip", onClick: () => askSend(s) }, s))),
       h("div", { class: "ask-inp-row" }, inp,
         h("button", { class: "ask-send", onClick: () => { askSend(inp.value); inp.value = ""; }, "aria-label": "发送" }, Icon("ArrowUp", 16)))));

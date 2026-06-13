@@ -34,6 +34,14 @@ export function isAIEnabled(env?: Record<string, string | undefined>): boolean {
   return readAIConfig(env) !== null;
 }
 
+/**
+ * 联网披露文案。所有调用 DeepSeek 的入口(整理 / 规则进化 / Ask Guard)在响应里
+ * 统一带上它,保证"数据会出本机上云"这件事在每个入口都被一致、显式地告知 ——
+ * 不在"本机只读不联网"的印象下被意外上云。
+ */
+export const NETWORK_DISCLOSURE =
+  "联网披露:本次分析会把上述去敏元数据发送到 DeepSeek(api.deepseek.com)。代码正文不在其中。";
+
 // ── 送进模型的去敏输入(只有这些字段允许出区) ──────────────────────
 /** 一条规则在被选事件里的聚合 —— 不含任何代码正文。 */
 export interface RuleStat {

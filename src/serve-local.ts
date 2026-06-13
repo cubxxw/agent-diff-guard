@@ -350,7 +350,17 @@ async function handle(req: Request): Promise<Response> {
 }
 
 export function startLocalServer(port = 4757): void {
-  const server = Bun.serve({ port, fetch: handle });
+  let server;
+  try {
+    server = Bun.serve({ port, fetch: handle });
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === "EADDRINUSE") {
+      console.error(`\n  端口 ${port} 已被占用 —— 换一个再试:agent-diff-guard serve --port ${port + 1}\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
   const n = readEvents().length;
   console.log(`\n  agent-diff-guard 审计面板(本地、只读)`);
   console.log(`  ▸ http://localhost:${server.port}`);

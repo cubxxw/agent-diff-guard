@@ -87,7 +87,7 @@
 
 ## 🟢 P3 —— 低优先级 / 打磨
 
-- [ ] **P3-1 `serve` 端口被占用时给友好提示而非栈崩溃**
+- [x] **P3-1 `serve` 端口被占用时给友好提示而非栈崩溃**
   改:`serve-local.ts` `startLocalServer` try/catch `Bun.serve`,EADDRINUSE 时打印"端口 N 已被占用,试 --port N+1"并退出码 1。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts serve --port 4798 >/tmp/v1.log 2>&1 & sleep 2; bun run src/cli.ts serve --port 4798 >/tmp/v2.log 2>&1; lsof -ti :4798 | xargs kill -9 2>/dev/null; grep -Eq '已被占用|in use|--port' /tmp/v2.log && ! grep -q 'EADDRINUSE' /tmp/v2.log && echo PASS || echo FAIL
 

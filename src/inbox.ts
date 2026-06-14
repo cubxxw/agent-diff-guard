@@ -24,6 +24,13 @@ export interface InboxItem {
   title: string;
   /** 要终端执行的自然语言指令(直接可作为 Claude Code 的输入) */
   action: string;
+  /**
+   * 执行引擎提示(可选,run daemon 用):
+   *   shell = action 是 shell 命令,直接 bash -lc 跑
+   *   agent = action 是自然语言,交给 claude headless
+   * 缺省时 run daemon 用 detectKind() 启发式推断。不破坏既有写入者。
+   */
+  kind?: "shell" | "agent";
   /** 这条决策的上下文:基于哪些规则/统计得出(去敏元数据,便于终端理解与留痕) */
   context: {
     rules?: string[];
@@ -49,7 +56,7 @@ export function doneDir(): string {
  * nowMs 可注入用于测试(项目里 ulid/时间都走可注入,延续这一约定)。
  */
 export function writeDecision(
-  o: { title: string; action: string; context?: InboxItem["context"]; nowMs?: number }
+  o: { title: string; action: string; kind?: InboxItem["kind"]; context?: InboxItem["context"]; nowMs?: number }
 ): InboxItem {
   const nowMs = o.nowMs ?? Date.now();
   const item: InboxItem = {
@@ -57,6 +64,7 @@ export function writeDecision(
     createdAt: new Date(nowMs).toISOString(),
     title: o.title,
     action: o.action,
+    ...(o.kind ? { kind: o.kind } : {}), // 仅在显式指定时写入,保持旧数据形状不变
     context: o.context ?? {},
     status: "pending",
   };

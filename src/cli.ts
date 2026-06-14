@@ -29,6 +29,10 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
   agent-diff-guard context [--json]  输出本仓库"危险地图",供 agent 编码前读取
   agent-diff-guard inbox [--json]    读取面板下发的决策指令(供终端 Claude Code 消费)
                                      [--done <id>] 标记某条已处理并归档
+  agent-diff-guard run [选项]        常驻执行 daemon:把信箱里的决策真的跑起来
+                                     全自动 + 黑名单保险丝(破坏性命令拦成待批)
+                                     [--once] 单轮 [--dry-run] 只分级不执行
+                                     [--poll N] 轮询毫秒 [--status] 看概况
 
 选项:
   --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
@@ -169,7 +173,65 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // 给了一个不认识的子命令(既不是 check/serve/context/inbox 也不是 flag)→ 用法错误
+  // run 子命令:常驻执行 daemon。把面板下发的 pending 决策真的跑起来。
+  //   全自动 + 黑名单保险丝:只读/可逆命令自动执行,破坏性命令拦成 blocked 待人工放行。
+  //   --once    处理完当前 pending 就退出(给 launchd/cron)
+  //   --dry-run 只分级打印,不真执行(上线前自检:哪些会跑、哪些被拦)
+  //   --poll N  轮询间隔毫秒(默认 2000)
+  //   --status  打印执行留痕与 blocked 队列概况后退出
+  if (cmd === "run") {
+    const { runDaemon } = await import("./runner");
+
+    if (rawArgs.includes("--status")) {
+      const { listRuns, listBlocked } = await import("./runlog");
+      const runs = listRuns();
+      const blocked = listBlocked();
+      console.log(C.bold(`\n  run daemon 概况\n`));
+      console.log(`  已执行留痕:${runs.length} 条`);
+      console.log(`  被拦待批:  ${blocked.length} 条`);
+      for (const b of blocked) {
+        console.log(`    ${C.yellow("⊘")} ${C.bold(b.title)}  ${C.dim("[" + b.id + "]")}`);
+        console.log(`      ${b.action}`);
+        console.log(C.dim(`      拦截理由:${b.blockedReason}`));
+        console.log(C.dim(`      确认无害后放行:把 inbox/blocked/${b.id}.json 移回 inbox/pending/\n`));
+      }
+      process.exit(0);
+    }
+
+    const once = rawArgs.includes("--once");
+    const dryRun = rawArgs.includes("--dry-run");
+    const pollIdx = rawArgs.indexOf("--poll");
+    const pollMs = pollIdx >= 0 ? parseInt(rawArgs[pollIdx + 1] ?? "2000", 10) || 2000 : 2000;
+
+    const mode = dryRun ? C.yellow("DRY-RUN(只分级,不执行)") : once ? "单轮" : "常驻";
+    console.log(C.bold(`\n  agent-diff-guard 执行 daemon · ${mode}`));
+    console.log(C.dim(`  策略:全自动 + 黑名单保险丝 · 暂停请 touch ~/.agent-diff-guard/PAUSE · Ctrl-C 退出\n`));
+
+    // Ctrl-C 优雅退出:让当前正在跑的那条完成,不再取下一条
+    const ac = new AbortController();
+    process.on("SIGINT", () => { console.log(C.dim("\n  收到退出信号,处理完当前一条后停止…")); ac.abort(); });
+
+    await runDaemon({
+      once, dryRun, pollMs, signal: ac.signal,
+      onResult: (r, item) => {
+        const tag = r.outcome === "executed" ? C.green("✓ 执行")
+          : r.outcome === "blocked" ? C.yellow("⊘ 拦截")
+          : r.outcome === "paused" ? C.dim("⏸ 暂停")
+          : C.red("✗ 失败");
+        console.log(`  ${tag}  ${C.bold(item.title)} ${C.dim("[" + item.id + "]")}`);
+        console.log(C.dim(`        ${item.action}`));
+        if (r.reason) console.log(C.dim(`        ${r.reason}`));
+      },
+    });
+
+    if (once || dryRun) {
+      console.log(C.dim("\n  本轮处理完毕。\n"));
+      process.exit(0);
+    }
+    return;
+  }
+
+  // 给了一个不认识的子命令(既不是 check/serve/context/inbox/run 也不是 flag)→ 用法错误
   if (cmd && !cmd.startsWith("-") && cmd !== "check") {
     console.error(`未知命令: ${cmd}\n`);
     console.error(HELP);

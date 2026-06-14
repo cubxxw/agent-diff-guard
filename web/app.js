@@ -1037,19 +1037,26 @@ function suggestionsFor(route) {
 }
 
 /* ── 命令面板 ⌘K ── */
+// 输入框与外壳只建一次;打字/方向键/hover 只局部刷新结果列表(.pal-list),
+// 绝不重建 input —— 这样光标、IME、焦点都不会被打断,彻底消除逐字闪烁。
 function CommandPalette() {
-  const ql = ai.palQ.trim().toLowerCase();
-  const findings = state.cache.findings || [];
-  const navHits = PAL_NAV.filter((n) => !ql || n.label.includes(ai.palQ.trim()) || n.kw.includes(ql) || n.en.toLowerCase().includes(ql));
-  const findHits = ql
-    ? findings.filter((f) => (f.file || "").toLowerCase().includes(ql) || (f.rule || "").toLowerCase().includes(ql) || (f.repo || "").toLowerCase().includes(ql)).slice(0, 5)
-    : [];
-  // 扁平列表 —— 顺序须与渲染一致,键盘高亮才对得上
-  const items = [];
-  navHits.forEach((n) => items.push({ type: "nav", ...n }));
-  findHits.forEach((f) => items.push({ type: "find", ...f }));
-  if (ql) items.push({ type: "ask", q: ai.palQ.trim() });
-  if (ai.palSel >= items.length) ai.palSel = Math.max(0, items.length - 1);
+  const lvlClass = (lv) => (lv === "wake" ? "pill-wake" : lv === "look" ? "pill-look" : "pill-pass");
+
+  // 根据当前 ai.palQ 算出扁平 items(顺序须与渲染一致,键盘高亮才对得上)
+  const compute = () => {
+    const ql = ai.palQ.trim().toLowerCase();
+    const findings = state.cache.findings || [];
+    const navHits = PAL_NAV.filter((n) => !ql || n.label.includes(ai.palQ.trim()) || n.kw.includes(ql) || n.en.toLowerCase().includes(ql));
+    const findHits = ql
+      ? findings.filter((f) => (f.file || "").toLowerCase().includes(ql) || (f.rule || "").toLowerCase().includes(ql) || (f.repo || "").toLowerCase().includes(ql)).slice(0, 5)
+      : [];
+    const items = [];
+    navHits.forEach((n) => items.push({ type: "nav", ...n }));
+    findHits.forEach((f) => items.push({ type: "find", ...f }));
+    if (ql) items.push({ type: "ask", q: ai.palQ.trim() });
+    if (ai.palSel >= items.length) ai.palSel = Math.max(0, items.length - 1);
+    return { ql, navHits, findHits, items };
+  };
 
   const run = (it) => {
     if (!it) return;
@@ -1057,65 +1064,85 @@ function CommandPalette() {
     else if (it.type === "find") { closePalette(); nav("queue"); }
     else if (it.type === "ask") { closePalette(); openAsk(it.q); }
   };
-  const lvlClass = (lv) => (lv === "wake" ? "pill-wake" : lv === "look" ? "pill-look" : "pill-pass");
 
-  let idx = -1;
-  const rows = [];
-  if (navHits.length) rows.push(h("div", { class: "pal-group" }, "快捷跳转"));
-  navHits.forEach((n) => {
-    idx++; const i = idx;
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon(n.icon, 16)),
-      h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, n.label)),
-      h("span", { class: "pal-item-en" }, n.en)));
-  });
-  if (findHits.length) rows.push(h("div", { class: "pal-group" }, "守门发现"));
-  findHits.forEach((f) => {
-    idx++; const i = idx;
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon("FileWarning", 16)),
-      h("span", { class: "pal-item-main" },
-        h("span", { class: "pal-item-label mono" }, f.file),
-        h("span", { class: "pal-item-sub" }, (f.repo || "") + (f.repo ? " · " : "") + truncate(f.task, 40))),
-      h("span", { class: "pill " + lvlClass(f.level) }, f.rule)));
-  });
-  if (ql) {
-    idx++; const i = idx;
-    rows.push(h("div", { class: "pal-group" }, "守门人"));
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon("MessageSquareText", 16)),
-      h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, `问守门人:「${ai.palQ.trim()}」`), h("span", { class: "pal-item-sub" }, "在审计数据范围内回答 · 只提案不动手")),
-      h("span", { class: "pal-item-tag mono" }, "ASK ↵")));
-  }
-  if (items.length === 0) rows.push(h("div", { class: "pal-empty" }, "没有匹配项。试试仓库名、规则名,或直接描述你想问的。"));
+  // 只重建结果行,不动 input。每次调用返回新的 row 元素数组。
+  const buildRows = (ctx) => {
+    const { ql, navHits, findHits, items } = ctx;
+    let idx = -1;
+    const rows = [];
+    if (navHits.length) rows.push(h("div", { class: "pal-group" }, "快捷跳转"));
+    navHits.forEach((n) => {
+      idx++; const i = idx;
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon(n.icon, 16)),
+        h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, n.label)),
+        h("span", { class: "pal-item-en" }, n.en)));
+    });
+    if (findHits.length) rows.push(h("div", { class: "pal-group" }, "守门发现"));
+    findHits.forEach((f) => {
+      idx++; const i = idx;
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon("FileWarning", 16)),
+        h("span", { class: "pal-item-main" },
+          h("span", { class: "pal-item-label mono" }, f.file),
+          h("span", { class: "pal-item-sub" }, (f.repo || "") + (f.repo ? " · " : "") + truncate(f.task, 40))),
+        h("span", { class: "pill " + lvlClass(f.level) }, f.rule)));
+    });
+    if (ql) {
+      idx++; const i = idx;
+      rows.push(h("div", { class: "pal-group" }, "守门人"));
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon("MessageSquareText", 16)),
+        h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, `问守门人:「${ai.palQ.trim()}」`), h("span", { class: "pal-item-sub" }, "在审计数据范围内回答 · 只提案不动手")),
+        h("span", { class: "pal-item-tag mono" }, "ASK ↵")));
+    }
+    if (items.length === 0) rows.push(h("div", { class: "pal-empty" }, "没有匹配项。试试仓库名、规则名,或直接描述你想问的。"));
+    return rows;
+  };
+
+  // 列表容器建一次;之后只换它的孩子,input 始终原地不动
+  const list = h("div", { class: "pal-list" });
+  let curItems = compute().items;
+  const refreshList = () => {
+    const ctx = compute();
+    curItems = ctx.items;
+    list.replaceChildren(...buildRows(ctx));
+  };
+  // 只更新高亮(方向键/hover):不重算、不重建,改 class 即可
+  const setSel = (i) => {
+    ai.palSel = i;
+    const btns = list.querySelectorAll(".pal-item");
+    btns.forEach((b, k) => b.classList.toggle("on", k === i));
+  };
+  refreshList();
 
   const onKeyDown = (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); ai.palSel = Math.min(ai.palSel + 1, items.length - 1); renderOverlays(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); ai.palSel = Math.max(ai.palSel - 1, 0); renderOverlays(); }
-    else if (e.key === "Enter") { e.preventDefault(); run(items[ai.palSel]); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setSel(Math.min(ai.palSel + 1, curItems.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSel(Math.max(ai.palSel - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); run(curItems[ai.palSel]); }
     else if (e.key === "Escape") { closePalette(); }
   };
   const inp = h("input", { class: "pal-inp", placeholder: "搜索发现、规则、仓库,或直接问守门人…", value: ai.palQ,
-    onInput: (e) => { ai.palQ = e.target.value; ai.palSel = 0; renderOverlays(); restoreFocus(); },
+    onInput: (e) => { ai.palQ = e.target.value; ai.palSel = 0; refreshList(); },
     onKeydown: onKeyDown });
   setTimeout(() => inp.focus(), 0);
 
   return h("div", { class: "pal-backdrop", onClick: closePalette },
     h("div", { class: "pal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-label": "搜索" },
       h("div", { class: "pal-inp-row" }, Icon("Search", 17), inp, h("kbd", { class: "pal-esc mono" }, "ESC")),
-      h("div", { class: "pal-list" }, ...rows),
+      list,
       h("div", { class: "pal-foot" },
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "↑"), h("kbd", { class: "pal-foot-k" }, "↓"), "选择"),
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "↵"), "打开"),
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "esc"), "关闭"),
         h("span", { class: "pal-foot-item", style: { marginLeft: "auto" } }, h("kbd", { class: "pal-foot-k" }, "⌘K"), "随时唤起"))));
 }
-// 重渲染后焦点会丢,把光标还给输入框末尾
-function restoreFocus() {
-  setTimeout(() => { const el = $(".pal-inp"); if (el && document.activeElement !== el) { const v = el.value; el.focus(); el.setSelectionRange(v.length, v.length); } }, 0);
-}
 
-function openPalette() { ai.palOpen = true; ai.palQ = ""; ai.palSel = 0; renderOverlays(); ensureAiData().then(renderOverlays); }
+function openPalette() {
+  ai.palOpen = true; ai.palQ = ""; ai.palSel = 0; renderOverlays();
+  // 数据回来后只在用户还没开始打字时才重渲染,否则会重建 input、吞掉已输入的字
+  ensureAiData().then(() => { if (ai.palOpen && !ai.palQ) renderOverlays(); });
+}
 function closePalette() { ai.palOpen = false; renderOverlays(); }
 
 /* ── 问守门人 浮窗 ── */

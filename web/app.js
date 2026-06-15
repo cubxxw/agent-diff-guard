@@ -66,6 +66,7 @@ const ICONS = {
   X: "M18 6 6 18|m6 6 12 12",
   Crosshair: "M22 12h-4|M6 12H2|M12 6V2|M12 22v-4|M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12z",
   FileWarning: "M14 2v4a2 2 0 0 0 2 2h4|M4 22V4a2 2 0 0 1 2-2h8l6 6v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z|M12 9v4|M12 17h.01",
+  Terminal: "M4 17l6-6-6-6|M12 19h8",
 };
 function Icon(name, size = 16, style) {
   const wrap = h("span", { class: "ic", style });
@@ -222,7 +223,10 @@ const NAV = [
     { id: "danger", label: "危险地图", en: "DANGER MAP", icon: "Map" },
   ]},
   { group: "用量 USAGE", items: [{ id: "usage", label: "用量与成本", en: "COST", icon: "Activity" }] },
-  { group: "闭环 LOOP", items: [{ id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" }] },
+  { group: "闭环 LOOP", items: [
+    { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" },
+    { id: "runlog", label: "执行记录", en: "EXEC LOG", icon: "Terminal" },
+  ]},
 ];
 const PAGE_TITLE = {
   overview: ["总览", "今天该不该担心,一眼看完"],
@@ -233,6 +237,7 @@ const PAGE_TITLE = {
   danger: ["危险地图", "把守门人的判断,变成 agent 编码前的输入"],
   usage: ["用量与成本", "一个人 × N 个 agent,烧了多少"],
   inbox: ["终端信箱", "面板裁决 → 指令 → 终端 agent 取走执行"],
+  runlog: ["执行记录", "daemon 每一次执行与拦截的完整留痕"],
 };
 
 const state = {
@@ -423,6 +428,7 @@ const PAGES = {
     },
     (d) => UsageView(d)),
   inbox: () => loadPage(() => api("/api/inbox/list"), (items) => InboxView(items)),
+  runlog: () => loadPage(() => api("/api/runlog"), (data) => RunlogView(data)),
 };
 
 /* ============================================================
@@ -871,6 +877,73 @@ function InboxView(items) {
         })));
 }
 
+// ── 8b. 执行记录(Runlog)──
+const runlogState = { filter: "all" };
+const runlogOpen = new Set();
+const fmtMs = (ms) => { if (ms == null) return "—"; if (ms < 1000) return ms + "ms"; if (ms < 60000) return (ms / 1000).toFixed(1) + "s"; return fmtDur(ms); };
+const PHASE_PILL = { pending: ["待执行", "pill-look"], blocked: ["已拦截", "pill-wake"], success: ["成功", "pill-pass"], failed: ["失败", "pill-wake"], timeout: ["超时", "pill-wake"] };
+const PHASE_FILTERS = [["all", "全部"], ["success", "成功"], ["failed", "失败"], ["blocked", "已拦截"], ["pending", "待执行"]];
+
+function RunlogView(data) {
+  const { stats, items } = data;
+  const list = items.filter((it) => runlogState.filter === "all" || it.phase === runlogState.filter);
+  const toggle = (id) => { runlogOpen.has(id) ? runlogOpen.delete(id) : runlogOpen.add(id); PAGES.runlog(); };
+  const pct = stats.totalRuns ? Math.round(stats.successRate * 100) + "%" : "—";
+  return F(
+    h("div", { class: "stat-row" },
+      Stat(stats.totalRuns, "已执行", "runs/ 留痕"),
+      Stat(pct, "成功率", "exit 0 占比", stats.successRate >= 0.9 ? "success" : stats.successRate >= 0.5 ? "" : "error"),
+      Stat(stats.totalBlocked, "被拦截", "安全闸门 · 破坏性命令", stats.totalBlocked > 0 ? "error" : ""),
+      Stat(stats.totalPending, "待执行", "等 daemon 取走", stats.totalPending > 0 ? "warning" : "")),
+    h("div", { class: "queue-head" },
+      h("div", { class: "seg" }, ...PHASE_FILTERS.map(([k, label]) =>
+        h("button", { class: "seg-btn" + (runlogState.filter === k ? " on" : ""), onClick: () => { runlogState.filter = k; PAGES.runlog(); } }, label)))),
+    Card({}, SectionTitle("执行时间线", "daemon 每一次执行与拦截的完整留痕。点击任意行查看详情。"),
+      list.length === 0
+        ? Empty("还没有执行记录 —— 在终端信箱写一条决策,再启动 agent-diff-guard run,这里就会有数据。", "Terminal")
+        : h("table", { class: "tbl" },
+            h("thead", null, h("tr", null, h("th", null, "时间"), h("th", null, "标题"), h("th", null, "类型"), h("th", null, "状态"), h("th", { class: "num" }, "耗时"))),
+            h("tbody", null, ...list.flatMap((it) => {
+              const [label, cls] = PHASE_PILL[it.phase] || ["—", ""];
+              const open = runlogOpen.has(it.id);
+              const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), onClick: () => toggle(it.id) },
+                h("td", null, h("span", { class: "row-caret" }, Icon("ArrowRight", 12)), h("span", { class: "mono" }, fmtTime(it.time))),
+                h("td", null, it.title ? (it.title.length > 50 ? it.title.slice(0, 50) + "…" : it.title) : h("span", { class: "t-dim" }, "—")),
+                h("td", null, Chip(it.kind || "—")),
+                h("td", null, h("span", { class: "pill " + cls }, label)),
+                h("td", { class: "num mono" }, fmtMs(it.durationMs)));
+              if (!open) return [row];
+              return [row, h("tr", null, h("td", { class: "detail-cell", colspan: 5 }, RunlogDetail(it)))];
+            })))));
+}
+
+function RunlogDetail(it) {
+  if (it.phase === "blocked") {
+    return h("div", { class: "detail-box" },
+      h("div", { class: "detail-grid" },
+        h("span", { class: "detail-k" }, "拦截理由"), h("span", { class: "detail-v" }, it.blockedReason || "—"),
+        h("span", { class: "detail-k" }, "原始命令"), h("span", { class: "detail-v mono" }, it.action || "—")),
+      h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "8px" } }, "安全闸门拦截了这条破坏性命令,不会自动执行。"));
+  }
+  if (it.phase === "pending") {
+    return h("div", { class: "detail-box" },
+      h("div", { class: "detail-grid" },
+        h("span", { class: "detail-k" }, "命令"), h("span", { class: "detail-v mono" }, it.action || "—"),
+        it.urgency && h("span", { class: "detail-k" }, "紧急度"), it.urgency && h("span", { class: "detail-v" }, it.urgency),
+        it.source && h("span", { class: "detail-k" }, "来源"), it.source && h("span", { class: "detail-v" }, it.source)),
+      h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "8px" } }, "等待 run daemon 轮询取走。"));
+  }
+  // success / failed / timeout
+  return h("div", { class: "detail-box" },
+    h("div", { class: "detail-grid" },
+      h("span", { class: "detail-k" }, "退出码"), h("span", { class: "detail-v mono" + (it.exitCode !== 0 ? " t-del" : "") }, it.exitCode ?? "—"),
+      h("span", { class: "detail-k" }, "耗时"), h("span", { class: "detail-v mono" }, fmtMs(it.durationMs)),
+      h("span", { class: "detail-k" }, "类型"), h("span", { class: "detail-v" }, it.kind || "—"),
+      it.timedOut && h("span", { class: "detail-k" }, "超时"), it.timedOut && h("span", { class: "detail-v t-del" }, "是 — 执行被终止")),
+    it.stdout && F(h("div", { class: "run-output-label" }, "STDOUT"), h("pre", { class: "run-output" }, it.stdout)),
+    it.stderr && F(h("div", { class: "run-output-label" }, "STDERR"), h("pre", { class: "run-output run-output-err" }, it.stderr)));
+}
+
 /* ============================================================
    9. 搜索(⌘K 命令面板)+ AI(问守门人)+ 陪伴 orb
    —— 移植自 Guard Console 设计稿,接真实后端数据。
@@ -905,8 +978,9 @@ const PAL_NAV = [
   { id: "danger", label: "危险地图", en: "DANGER MAP", icon: "Map", kw: "danger weixian map hot" },
   { id: "usage", label: "用量与成本", en: "COST", icon: "Activity", kw: "usage cost yongliang token" },
   { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", kw: "inbox xinxiang terminal" },
+  { id: "runlog", label: "执行记录", en: "EXEC LOG", icon: "Terminal", kw: "runlog exec zhixing jilu daemon run blocked terminal" },
 ];
-const ROUTE_CN = { queue: "审查队列", overview: "总览", rules: "规则", flight: "飞行记录", danger: "危险地图", audit: "守门记录", usage: "用量", inbox: "终端信箱" };
+const ROUTE_CN = { queue: "审查队列", overview: "总览", rules: "规则", flight: "飞行记录", danger: "危险地图", audit: "守门记录", usage: "用量", inbox: "终端信箱", runlog: "执行记录" };
 
 // 把 overlay 挂到独立容器(只重绘 overlay,不动主页面)
 function overlayRoot() {

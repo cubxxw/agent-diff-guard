@@ -22,6 +22,7 @@ import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
 import { detectViolations, summarizeViolations, type Violation } from "./violations";
 import { writeDecision, listPending, listDone } from "./inbox";
+import { listRuns, listBlocked } from "./runlog";
 import { buildQueue } from "./findings";
 import { repoHistory, staticZones } from "./context";
 
@@ -186,6 +187,49 @@ function buildInboxView() {
     .sort((a, b) => b.time.localeCompare(a.time));
 }
 
+/** 执行记录:pending + blocked + runs 合并为统一时间线,给面板 /api/runlog。 */
+function buildRunlogView() {
+  const MAX_OUTPUT = 2000;
+  const trunc = (s: string) => (s.length > MAX_OUTPUT ? s.slice(0, MAX_OUTPUT) + "\n…(已截断)" : s);
+
+  type Phase = "pending" | "blocked" | "success" | "failed" | "timeout";
+  const pending = listPending().map((i) => ({
+    id: i.id, time: i.createdAt, title: i.title, action: i.action,
+    kind: i.kind, phase: "pending" as Phase,
+    urgency: i.context?.urgency,
+    source: (i.context as { source?: string }).source,
+  }));
+  const blocked = listBlocked().map((i) => ({
+    id: i.id, time: i.blockedAt, title: i.title, action: i.action,
+    kind: i.kind, phase: "blocked" as Phase,
+    blockedReason: i.blockedReason,
+    urgency: i.context?.urgency,
+    source: (i.context as { source?: string }).source,
+  }));
+  const runs = listRuns().map((r) => {
+    const phase: Phase = r.timedOut ? "timeout" : r.exitCode === 0 ? "success" : "failed";
+    return {
+      id: r.id, time: r.createdAt, title: r.title, action: r.action,
+      kind: r.kind, phase,
+      exitCode: r.exitCode, durationMs: r.durationMs,
+      stdout: trunc(r.stdout), stderr: trunc(r.stderr), timedOut: r.timedOut,
+    };
+  });
+
+  const items = [...pending, ...blocked, ...runs].sort((a, b) => b.time.localeCompare(a.time));
+  const successCount = runs.filter((r) => r.phase === "success").length;
+  return {
+    stats: {
+      totalRuns: runs.length,
+      totalBlocked: blocked.length,
+      totalPending: pending.length,
+      successRate: runs.length ? successCount / runs.length : 0,
+      totalTimeout: runs.filter((r) => r.phase === "timeout").length,
+    },
+    items,
+  };
+}
+
 /** web 静态资源目录(相对本文件) */
 function webDir(): string {
   return join(import.meta.dir, "..", "web");
@@ -220,6 +264,9 @@ async function handle(req: Request): Promise<Response> {
 
   // ── 终端信箱列表 API:pending + done 全量(状态可见) ──
   if (path === "/api/inbox/list") return jsonResponse(buildInboxView());
+
+  // ── 执行记录 API:pending + blocked + runs 合并的统一时间线 ──
+  if (path === "/api/runlog") return jsonResponse(buildRunlogView());
 
   // ── AI 分析 API:只读元数据 → DeepSeek → 摘要+建议(配了 key 才启用) ──
   if (path === "/api/ai/status") return jsonResponse({ enabled: isAIEnabled() });

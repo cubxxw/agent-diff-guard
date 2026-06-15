@@ -91,7 +91,9 @@ export interface ClaudeOpts {
  * 要让 claude 真动手改文件,需调用方显式传 acceptEdits/bypassPermissions。
  */
 export function buildClaudeArgs(prompt: string, opts: ClaudeOpts = {}): string[] {
-  const args = ["-p", prompt, "--output-format", opts.outputFormat ?? "json"];
+  const fmt = opts.outputFormat ?? "json";
+  const args = ["-p", prompt, "--output-format", fmt];
+  if (fmt === "stream-json") args.push("--verbose");
   args.push("--permission-mode", opts.permissionMode ?? "default");
   return args;
 }

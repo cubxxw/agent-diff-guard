@@ -33,6 +33,10 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
                                      全自动 + 黑名单保险丝(破坏性命令拦成待批)
                                      [--once] 单轮 [--dry-run] 只分级不执行
                                      [--poll N] 轮询毫秒 [--status] 看概况
+  agent-diff-guard agent [选项]      Agent 系统:web 面板 + WebSocket + 持续执行引擎
+                                     [--port N] 端口(默认 4757)
+                                     [--no-agent] 仅面板(不启动 supervisor)
+                                     [--status] 查看 agent 任务队列状态
 
 选项:
   --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
@@ -173,6 +177,43 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // agent 子命令:启动完整 Agent 系统(web 面板 + WebSocket + Supervisor 执行引擎)
+  if (cmd === "agent") {
+    if (rawArgs.includes("--status")) {
+      const { listTasksPending, listTasksRunning, listTasksDone } = await import("./task-queue");
+      const pending = listTasksPending();
+      const running = listTasksRunning();
+      const done = listTasksDone(10);
+      console.log(C.bold(`\n  Agent 任务队列状态\n`));
+      console.log(`  等待中:  ${pending.length} 个任务`);
+      console.log(`  执行中:  ${running.length} 个任务`);
+      console.log(`  已完成:  ${done.length} 个任务(最近)\n`);
+      for (const t of running) {
+        console.log(`  ${C.yellow("▶")} ${C.bold(t.title)}  ${C.dim("[" + t.id + "]")}`);
+        console.log(C.dim(`    开始: ${t.startedAt ?? "?"}\n`));
+      }
+      for (const t of pending) {
+        console.log(`  ${C.dim("◯")} ${t.title}  ${C.dim("[P" + t.priority + "] [" + t.id + "]")}`);
+      }
+      if (done.length > 0) {
+        console.log(C.dim(`\n  最近完成:`));
+        for (const t of done.slice(0, 5)) {
+          const icon = t.status === "done" ? C.green("✓") : t.status === "failed" ? C.red("✗") : C.dim("⊘");
+          console.log(`  ${icon} ${t.title}  ${C.dim("[" + t.status + "] [" + (t.durationMs ? (t.durationMs / 1000).toFixed(1) + "s" : "?") + "]")}`);
+        }
+      }
+      console.log();
+      process.exit(0);
+    }
+
+    const pi = rawArgs.indexOf("--port");
+    const port = pi >= 0 ? parseInt(rawArgs[pi + 1] ?? "4757", 10) || 4757 : 4757;
+    const noAgent = rawArgs.includes("--no-agent");
+    const { startLocalServer } = await import("./serve-local");
+    startLocalServer(port, { enableAgent: !noAgent });
+    return;
+  }
+
   // run 子命令:常驻执行 daemon。把面板下发的 pending 决策真的跑起来。
   //   全自动 + 黑名单保险丝:只读/可逆命令自动执行,破坏性命令拦成 blocked 待人工放行。
   //   --once    处理完当前 pending 就退出(给 launchd/cron)
@@ -231,7 +272,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 给了一个不认识的子命令(既不是 check/serve/context/inbox/run 也不是 flag)→ 用法错误
+  // 给了一个不认识的子命令 → 用法错误
   if (cmd && !cmd.startsWith("-") && cmd !== "check") {
     console.error(`未知命令: ${cmd}\n`);
     console.error(HELP);

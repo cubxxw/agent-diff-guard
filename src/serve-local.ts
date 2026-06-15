@@ -1,12 +1,11 @@
-// serve-local.ts — 本地只读审计面板服务。
+// serve-local.ts — 本地审计面板 + Agent 实时通信服务。
 //
-// `agent-diff-guard serve` 启动它:读本地 ~/.agent-diff-guard/events.jsonl,
-// 把聚合结果通过 HTTP 暴露给 web/ 面板。纯本地、只读、零上传 —— 数据不出这台机器。
+// `agent-diff-guard serve` 启动它:
+//   1. HTTP API:读本地 ~/.agent-diff-guard/events.jsonl,聚合结果给 web 面板
+//   2. WebSocket:agent supervisor 与 web 面板的实时双向通道
+//   3. Agent Supervisor:后台持续运行,从 task-queue 取任务执行 Claude Code headless
 //
-// 刻意不做的事(守产品哲学):
-//   - 不做 WebSocket/SSE/轮询推送。面板是"周期性看趋势",不是实时大屏。
-//     每次刷新页面才重新聚合,不主动 push。
-//   - 不写、不删事件,只读。
+// 纯本地、零上传 —— 数据不出这台机器。
 
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -24,6 +23,10 @@ import { detectViolations, summarizeViolations, type Violation } from "./violati
 import { writeDecision, listPending, listDone } from "./inbox";
 import { buildQueue } from "./findings";
 import { repoHistory, staticZones } from "./context";
+import { WebSocketHub } from "./ws";
+import type { WsData } from "./ws";
+import { Supervisor } from "./supervisor";
+import { listTasksPending, listTasksRunning, listTasksDone, findTask, toView, submitTask } from "./task-queue";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -303,6 +306,39 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
+  // ── Agent 任务 API ──
+  if (path === "/api/tasks/list") {
+    return jsonResponse({
+      pending: listTasksPending().map(toView),
+      running: listTasksRunning().map(toView),
+      done: listTasksDone(30).map(toView),
+    });
+  }
+
+  if (path === "/api/tasks/submit" && req.method === "POST") {
+    const body = await readJsonBody<{ title?: string; prompt?: string; repo?: string; priority?: number }>(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!body.prompt || typeof body.prompt !== "string") {
+      return new Response(JSON.stringify({ ok: false, reason: "缺少 prompt(要 agent 执行的任务描述)" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const task = submitTask({
+      title: typeof body.title === "string" ? body.title : "未命名任务",
+      prompt: body.prompt,
+      repo: typeof body.repo === "string" ? body.repo : undefined,
+      priority: (body.priority === 1 || body.priority === 2 || body.priority === 3) ? body.priority : 2,
+    });
+    return jsonResponse({ ok: true, id: task.id, task: toView(task) });
+  }
+
+  if (path.startsWith("/api/tasks/") && path.split("/").length === 4) {
+    const id = path.split("/")[3]!;
+    const task = findTask(id);
+    if (!task) return new Response(JSON.stringify({ ok: false, reason: "未找到任务" }), { status: 404, headers: JSON_HEADERS });
+    return jsonResponse(task);
+  }
+
   // ── 信箱写入 API:把面板上的用户决策写成指令,等终端 Claude Code 来取 ──
   if (path === "/api/inbox/decision" && req.method === "POST") {
     const body = await readJsonBody<{ title?: string; action?: string; context?: Record<string, unknown> }>(req);
@@ -360,10 +396,37 @@ async function handle(req: Request): Promise<Response> {
   return new Response("Not Found", { status: 404 });
 }
 
-export function startLocalServer(port = 4757): void {
+// ── 全局单例(WebSocket upgrade 回调需要引用) ──
+let globalSupervisor: Supervisor | null = null;
+
+export function startLocalServer(port = 4757, opts?: { enableAgent?: boolean }): void {
+  const enableAgent = opts?.enableAgent ?? true;
+  const hub = new WebSocketHub();
+
   let server;
   try {
-    server = Bun.serve({ port, fetch: handle });
+    server = Bun.serve<WsData>({
+      port,
+      fetch(req, server) {
+        const url = new URL(req.url);
+        if (url.pathname === "/ws") {
+          const upgraded = server.upgrade(req, { data: WebSocketHub.makeWsData() });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
+        return handle(req);
+      },
+      websocket: {
+        open(ws) {
+          hub.handleOpen(ws);
+          if (globalSupervisor) {
+            hub.send(ws, globalSupervisor.getConnectedMessage());
+          }
+        },
+        close(ws) { hub.handleClose(ws); },
+        message(ws, msg) { hub.handleMessage(ws, msg); },
+      },
+    });
   } catch (e) {
     const code = (e as { code?: string })?.code;
     if (code === "EADDRINUSE") {
@@ -372,8 +435,30 @@ export function startLocalServer(port = 4757): void {
     }
     throw e;
   }
+
   const n = readEvents().length;
-  console.log(`\n  agent-diff-guard 审计面板(本地、只读)`);
+  console.log(`\n  agent-diff-guard 审计面板 + Agent 系统`);
   console.log(`  ▸ http://localhost:${server.port}`);
-  console.log(`  ▸ 已读取 ${n} 条守门事件  (Ctrl-C 退出)\n`);
+  console.log(`  ▸ WebSocket: ws://localhost:${server.port}/ws`);
+  console.log(`  ▸ 已读取 ${n} 条守门事件`);
+
+  if (enableAgent) {
+    const supervisor = new Supervisor(hub);
+    globalSupervisor = supervisor;
+    const ac = new AbortController();
+    process.on("SIGINT", () => {
+      console.log("\n  收到退出信号,正在停止 supervisor…");
+      supervisor.stop();
+      ac.abort();
+      process.exit(0);
+    });
+    console.log(`  ▸ Agent Supervisor 已启动(串行执行,PAUSE kill-switch)`);
+    console.log(`  ▸ Ctrl-C 退出\n`);
+    supervisor.start({ signal: ac.signal }).catch((e) => {
+      console.error("  Supervisor 异常退出:", e);
+    });
+  } else {
+    console.log(`  ▸ Agent Supervisor 未启动(仅面板模式)`);
+    console.log(`  ▸ Ctrl-C 退出\n`);
+  }
 }

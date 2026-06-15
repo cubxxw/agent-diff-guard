@@ -223,6 +223,7 @@ const NAV = [
   ]},
   { group: "用量 USAGE", items: [{ id: "usage", label: "用量与成本", en: "COST", icon: "Activity" }] },
   { group: "闭环 LOOP", items: [{ id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" }] },
+  { group: "AGENT", items: [{ id: "agent", label: "Agent 系统", en: "AGENT", icon: "Cpu", badge: "agent" }] },
 ];
 const PAGE_TITLE = {
   overview: ["总览", "今天该不该担心,一眼看完"],
@@ -233,6 +234,7 @@ const PAGE_TITLE = {
   danger: ["危险地图", "把守门人的判断,变成 agent 编码前的输入"],
   usage: ["用量与成本", "一个人 × N 个 agent,烧了多少"],
   inbox: ["终端信箱", "面板裁决 → 指令 → 终端 agent 取走执行"],
+  agent: ["Agent 系统", "下发任务 · 实时输出 · 审批决策 — 持续运行的 AI agent 执行引擎"],
 };
 
 const state = {
@@ -243,7 +245,7 @@ const state = {
   })(),
   decisions: (() => { try { return JSON.parse(localStorage.getItem("adg-decisions") || "{}"); } catch { return {}; } })(),
   cache: {},
-  badges: { queue: 0, inbox: 0 },
+  badges: { queue: 0, inbox: 0, agent: 0 },
 };
 function persistDecisions() { try { localStorage.setItem("adg-decisions", JSON.stringify(state.decisions)); } catch {} }
 function nav(r) {
@@ -259,10 +261,12 @@ window.addEventListener("hashchange", () => {
 });
 
 /* ============================================================
-   6. 应用壳渲染
+   6. 应用壳渲染(局部更新:壳只建一次,导航只切高亮+内容区)
    ============================================================ */
-function render() {
-  const [title, subtitle] = PAGE_TITLE[state.route];
+let _shellMounted = false;
+
+function ensureShell() {
+  if (_shellMounted && $("#root").firstChild) return;
   const root = $("#root");
   root.innerHTML = "";
   root.appendChild(
@@ -287,7 +291,7 @@ function render() {
           h("button", { class: "side-reset", onClick: () => { state.decisions = {}; persistDecisions(); render(); toast("已重置本地裁决记录", "RefreshCw"); } }, "重置本地裁决"))),
       h("div", { class: "main" },
         h("header", { class: "topbar" },
-          h("div", null, h("h1", { class: "top-title" }, title), h("div", { class: "top-sub" }, subtitle)),
+          h("div", null, h("h1", { class: "top-title", id: "top-title" }, ""), h("div", { class: "top-sub", id: "top-sub" }, "")),
           h("div", { class: "top-right" },
             h("div", { class: "searchbox", onClick: openPalette, role: "button", "aria-label": "搜索(⌘K)" },
               Icon("Search", 15),
@@ -295,7 +299,25 @@ function render() {
               h("kbd", { class: "searchbox-kbd" }, "⌘K")),
             h("button", { class: "btn btn-ghost btn-sm", onClick: () => { state.cache = {}; render(); renderOverlays(); toast("已刷新", "RefreshCw"); } }, Icon("RefreshCw", 13), "刷新"))),
         h("div", { class: "content" }, h("div", { class: "page", id: "page" }, skeletonStats())))));
+  _shellMounted = true;
+}
 
+function updateNavHighlight() {
+  const allItems = NAV.flatMap((g) => g.items);
+  document.querySelectorAll(".nav-item").forEach((btn, idx) => {
+    const it = allItems[idx];
+    if (!it) return;
+    if (it.id === state.route) btn.classList.add("on");
+    else btn.classList.remove("on");
+  });
+}
+
+function render() {
+  ensureShell();
+  const [title, subtitle] = PAGE_TITLE[state.route] || ["", ""];
+  const tt = $("#top-title"); if (tt) tt.textContent = title;
+  const ts = $("#top-sub"); if (ts) ts.textContent = subtitle;
+  updateNavHighlight();
   PAGES[state.route]();
   refreshBadges();
 }
@@ -423,6 +445,7 @@ const PAGES = {
     },
     (d) => UsageView(d)),
   inbox: () => loadPage(() => api("/api/inbox/list"), (items) => InboxView(items)),
+  agent: () => loadPage(() => api("/api/tasks/list"), (data) => AgentView(data)),
 };
 
 /* ============================================================
@@ -905,8 +928,9 @@ const PAL_NAV = [
   { id: "danger", label: "危险地图", en: "DANGER MAP", icon: "Map", kw: "danger weixian map hot" },
   { id: "usage", label: "用量与成本", en: "COST", icon: "Activity", kw: "usage cost yongliang token" },
   { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", kw: "inbox xinxiang terminal" },
+  { id: "agent", label: "Agent 系统", en: "AGENT", icon: "Cpu", kw: "agent zhixing supervisor task renwu" },
 ];
-const ROUTE_CN = { queue: "审查队列", overview: "总览", rules: "规则", flight: "飞行记录", danger: "危险地图", audit: "守门记录", usage: "用量", inbox: "终端信箱" };
+const ROUTE_CN = { queue: "审查队列", overview: "总览", rules: "规则", flight: "飞行记录", danger: "危险地图", audit: "守门记录", usage: "用量", inbox: "终端信箱", agent: "Agent 系统" };
 
 // 把 overlay 挂到独立容器(只重绘 overlay,不动主页面)
 function overlayRoot() {
@@ -1037,19 +1061,26 @@ function suggestionsFor(route) {
 }
 
 /* ── 命令面板 ⌘K ── */
+// 输入框与外壳只建一次;打字/方向键/hover 只局部刷新结果列表(.pal-list),
+// 绝不重建 input —— 这样光标、IME、焦点都不会被打断,彻底消除逐字闪烁。
 function CommandPalette() {
-  const ql = ai.palQ.trim().toLowerCase();
-  const findings = state.cache.findings || [];
-  const navHits = PAL_NAV.filter((n) => !ql || n.label.includes(ai.palQ.trim()) || n.kw.includes(ql) || n.en.toLowerCase().includes(ql));
-  const findHits = ql
-    ? findings.filter((f) => (f.file || "").toLowerCase().includes(ql) || (f.rule || "").toLowerCase().includes(ql) || (f.repo || "").toLowerCase().includes(ql)).slice(0, 5)
-    : [];
-  // 扁平列表 —— 顺序须与渲染一致,键盘高亮才对得上
-  const items = [];
-  navHits.forEach((n) => items.push({ type: "nav", ...n }));
-  findHits.forEach((f) => items.push({ type: "find", ...f }));
-  if (ql) items.push({ type: "ask", q: ai.palQ.trim() });
-  if (ai.palSel >= items.length) ai.palSel = Math.max(0, items.length - 1);
+  const lvlClass = (lv) => (lv === "wake" ? "pill-wake" : lv === "look" ? "pill-look" : "pill-pass");
+
+  // 根据当前 ai.palQ 算出扁平 items(顺序须与渲染一致,键盘高亮才对得上)
+  const compute = () => {
+    const ql = ai.palQ.trim().toLowerCase();
+    const findings = state.cache.findings || [];
+    const navHits = PAL_NAV.filter((n) => !ql || n.label.includes(ai.palQ.trim()) || n.kw.includes(ql) || n.en.toLowerCase().includes(ql));
+    const findHits = ql
+      ? findings.filter((f) => (f.file || "").toLowerCase().includes(ql) || (f.rule || "").toLowerCase().includes(ql) || (f.repo || "").toLowerCase().includes(ql)).slice(0, 5)
+      : [];
+    const items = [];
+    navHits.forEach((n) => items.push({ type: "nav", ...n }));
+    findHits.forEach((f) => items.push({ type: "find", ...f }));
+    if (ql) items.push({ type: "ask", q: ai.palQ.trim() });
+    if (ai.palSel >= items.length) ai.palSel = Math.max(0, items.length - 1);
+    return { ql, navHits, findHits, items };
+  };
 
   const run = (it) => {
     if (!it) return;
@@ -1057,65 +1088,85 @@ function CommandPalette() {
     else if (it.type === "find") { closePalette(); nav("queue"); }
     else if (it.type === "ask") { closePalette(); openAsk(it.q); }
   };
-  const lvlClass = (lv) => (lv === "wake" ? "pill-wake" : lv === "look" ? "pill-look" : "pill-pass");
 
-  let idx = -1;
-  const rows = [];
-  if (navHits.length) rows.push(h("div", { class: "pal-group" }, "快捷跳转"));
-  navHits.forEach((n) => {
-    idx++; const i = idx;
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon(n.icon, 16)),
-      h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, n.label)),
-      h("span", { class: "pal-item-en" }, n.en)));
-  });
-  if (findHits.length) rows.push(h("div", { class: "pal-group" }, "守门发现"));
-  findHits.forEach((f) => {
-    idx++; const i = idx;
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon("FileWarning", 16)),
-      h("span", { class: "pal-item-main" },
-        h("span", { class: "pal-item-label mono" }, f.file),
-        h("span", { class: "pal-item-sub" }, (f.repo || "") + (f.repo ? " · " : "") + truncate(f.task, 40))),
-      h("span", { class: "pill " + lvlClass(f.level) }, f.rule)));
-  });
-  if (ql) {
-    idx++; const i = idx;
-    rows.push(h("div", { class: "pal-group" }, "守门人"));
-    rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => { ai.palSel = i; renderOverlays(); }, onClick: () => run(items[i]) },
-      h("span", { class: "pal-item-ic" }, Icon("MessageSquareText", 16)),
-      h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, `问守门人:「${ai.palQ.trim()}」`), h("span", { class: "pal-item-sub" }, "在审计数据范围内回答 · 只提案不动手")),
-      h("span", { class: "pal-item-tag mono" }, "ASK ↵")));
-  }
-  if (items.length === 0) rows.push(h("div", { class: "pal-empty" }, "没有匹配项。试试仓库名、规则名,或直接描述你想问的。"));
+  // 只重建结果行,不动 input。每次调用返回新的 row 元素数组。
+  const buildRows = (ctx) => {
+    const { ql, navHits, findHits, items } = ctx;
+    let idx = -1;
+    const rows = [];
+    if (navHits.length) rows.push(h("div", { class: "pal-group" }, "快捷跳转"));
+    navHits.forEach((n) => {
+      idx++; const i = idx;
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon(n.icon, 16)),
+        h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, n.label)),
+        h("span", { class: "pal-item-en" }, n.en)));
+    });
+    if (findHits.length) rows.push(h("div", { class: "pal-group" }, "守门发现"));
+    findHits.forEach((f) => {
+      idx++; const i = idx;
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon("FileWarning", 16)),
+        h("span", { class: "pal-item-main" },
+          h("span", { class: "pal-item-label mono" }, f.file),
+          h("span", { class: "pal-item-sub" }, (f.repo || "") + (f.repo ? " · " : "") + truncate(f.task, 40))),
+        h("span", { class: "pill " + lvlClass(f.level) }, f.rule)));
+    });
+    if (ql) {
+      idx++; const i = idx;
+      rows.push(h("div", { class: "pal-group" }, "守门人"));
+      rows.push(h("button", { class: "pal-item" + (ai.palSel === i ? " on" : ""), onMouseenter: () => setSel(i), onClick: () => run(items[i]) },
+        h("span", { class: "pal-item-ic" }, Icon("MessageSquareText", 16)),
+        h("span", { class: "pal-item-main" }, h("span", { class: "pal-item-label" }, `问守门人:「${ai.palQ.trim()}」`), h("span", { class: "pal-item-sub" }, "在审计数据范围内回答 · 只提案不动手")),
+        h("span", { class: "pal-item-tag mono" }, "ASK ↵")));
+    }
+    if (items.length === 0) rows.push(h("div", { class: "pal-empty" }, "没有匹配项。试试仓库名、规则名,或直接描述你想问的。"));
+    return rows;
+  };
+
+  // 列表容器建一次;之后只换它的孩子,input 始终原地不动
+  const list = h("div", { class: "pal-list" });
+  let curItems = compute().items;
+  const refreshList = () => {
+    const ctx = compute();
+    curItems = ctx.items;
+    list.replaceChildren(...buildRows(ctx));
+  };
+  // 只更新高亮(方向键/hover):不重算、不重建,改 class 即可
+  const setSel = (i) => {
+    ai.palSel = i;
+    const btns = list.querySelectorAll(".pal-item");
+    btns.forEach((b, k) => b.classList.toggle("on", k === i));
+  };
+  refreshList();
 
   const onKeyDown = (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); ai.palSel = Math.min(ai.palSel + 1, items.length - 1); renderOverlays(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); ai.palSel = Math.max(ai.palSel - 1, 0); renderOverlays(); }
-    else if (e.key === "Enter") { e.preventDefault(); run(items[ai.palSel]); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setSel(Math.min(ai.palSel + 1, curItems.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSel(Math.max(ai.palSel - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); run(curItems[ai.palSel]); }
     else if (e.key === "Escape") { closePalette(); }
   };
   const inp = h("input", { class: "pal-inp", placeholder: "搜索发现、规则、仓库,或直接问守门人…", value: ai.palQ,
-    onInput: (e) => { ai.palQ = e.target.value; ai.palSel = 0; renderOverlays(); restoreFocus(); },
+    onInput: (e) => { ai.palQ = e.target.value; ai.palSel = 0; refreshList(); },
     onKeydown: onKeyDown });
   setTimeout(() => inp.focus(), 0);
 
   return h("div", { class: "pal-backdrop", onClick: closePalette },
     h("div", { class: "pal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-label": "搜索" },
       h("div", { class: "pal-inp-row" }, Icon("Search", 17), inp, h("kbd", { class: "pal-esc mono" }, "ESC")),
-      h("div", { class: "pal-list" }, ...rows),
+      list,
       h("div", { class: "pal-foot" },
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "↑"), h("kbd", { class: "pal-foot-k" }, "↓"), "选择"),
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "↵"), "打开"),
         h("span", { class: "pal-foot-item" }, h("kbd", { class: "pal-foot-k" }, "esc"), "关闭"),
         h("span", { class: "pal-foot-item", style: { marginLeft: "auto" } }, h("kbd", { class: "pal-foot-k" }, "⌘K"), "随时唤起"))));
 }
-// 重渲染后焦点会丢,把光标还给输入框末尾
-function restoreFocus() {
-  setTimeout(() => { const el = $(".pal-inp"); if (el && document.activeElement !== el) { const v = el.value; el.focus(); el.setSelectionRange(v.length, v.length); } }, 0);
-}
 
-function openPalette() { ai.palOpen = true; ai.palQ = ""; ai.palSel = 0; renderOverlays(); ensureAiData().then(renderOverlays); }
+function openPalette() {
+  ai.palOpen = true; ai.palQ = ""; ai.palSel = 0; renderOverlays();
+  // 数据回来后只在用户还没开始打字时才重渲染,否则会重建 input、吞掉已输入的字
+  ensureAiData().then(() => { if (ai.palOpen && !ai.palQ) renderOverlays(); });
+}
 function closePalette() { ai.palOpen = false; renderOverlays(); }
 
 /* ── 问守门人 浮窗 ── */
@@ -1281,6 +1332,201 @@ window.addEventListener("keydown", (e) => {
     ai.palOpen ? closePalette() : openPalette();
   }
 });
+
+/* ============================================================
+   Agent 系统 — WebSocket 管理 + Agent 页面 View
+   ============================================================ */
+const agentState = {
+  ws: null,
+  connected: false,
+  version: "",
+  activeTask: null,
+  queue: [],
+  outputLines: [],
+  maxOutputLines: 500,
+  submitForm: { title: "", prompt: "", repo: "", priority: 2 },
+};
+
+function agentWsConnect() {
+  if (agentState.ws && agentState.ws.readyState <= 1) return;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  agentState.ws = ws;
+
+  ws.onopen = () => { agentState.connected = true; agentWsPing(); if (state.route === "agent") PAGES.agent(); };
+  ws.onclose = () => { agentState.connected = false; setTimeout(agentWsConnect, 3000); if (state.route === "agent") PAGES.agent(); };
+  ws.onerror = () => {};
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    agentWsHandle(msg);
+  };
+}
+
+function agentWsPing() {
+  if (!agentState.ws || agentState.ws.readyState !== 1) return;
+  agentState.ws.send(JSON.stringify({ type: "ping" }));
+  setTimeout(agentWsPing, 25000);
+}
+
+function agentWsSend(msg) {
+  if (agentState.ws && agentState.ws.readyState === 1) agentState.ws.send(JSON.stringify(msg));
+}
+
+function agentWsHandle(msg) {
+  switch (msg.type) {
+    case "connected":
+      agentState.version = msg.version;
+      agentState.activeTask = msg.activeTask;
+      agentState.queue = msg.queue || [];
+      break;
+    case "task:accepted":
+      agentState.queue = [msg.task, ...agentState.queue.filter((t) => t.id !== msg.task.id)];
+      state.badges.agent = agentState.queue.filter((t) => t.status === "pending" || t.status === "running").length;
+      rerenderNavBadges();
+      break;
+    case "task:started":
+      agentState.activeTask = agentState.queue.find((t) => t.id === msg.id) || { id: msg.id, status: "running" };
+      if (agentState.activeTask) agentState.activeTask.status = "running";
+      agentState.outputLines = [];
+      break;
+    case "task:output":
+      agentState.outputLines.push({ stream: msg.stream, text: msg.chunk, ts: msg.ts });
+      if (agentState.outputLines.length > agentState.maxOutputLines) agentState.outputLines = agentState.outputLines.slice(-300);
+      agentRenderTerminal();
+      return;
+    case "task:complete":
+      if (agentState.activeTask) { agentState.activeTask.status = "done"; agentState.activeTask.exitCode = msg.exitCode; }
+      agentState.activeTask = null;
+      state.badges.agent = Math.max(0, (state.badges.agent || 0) - 1);
+      rerenderNavBadges();
+      break;
+    case "task:failed":
+      if (agentState.activeTask) { agentState.activeTask.status = "failed"; }
+      agentState.activeTask = null;
+      agentState.outputLines.push({ stream: "stderr", text: "\n[失败] " + (msg.error || "未知错误") + "\n", ts: Date.now() });
+      agentRenderTerminal();
+      state.badges.agent = Math.max(0, (state.badges.agent || 0) - 1);
+      rerenderNavBadges();
+      break;
+    case "approval:required":
+      agentState.outputLines.push({ stream: "stderr", text: "\n⚠ 需要审批: " + msg.action + " (" + msg.reason + ")\n", ts: Date.now() });
+      agentRenderTerminal();
+      break;
+    case "pong":
+      return;
+  }
+  if (state.route === "agent") PAGES.agent();
+}
+
+function agentRenderTerminal() {
+  const el = document.getElementById("agent-terminal");
+  if (!el) return;
+  const fragment = document.createDocumentFragment();
+  const lines = agentState.outputLines.slice(-200);
+  el.innerHTML = "";
+  for (const line of lines) {
+    const d = document.createElement("div");
+    d.className = "at-line" + (line.stream === "stderr" ? " at-err" : "");
+    d.textContent = line.text;
+    fragment.appendChild(d);
+  }
+  el.appendChild(fragment);
+  el.scrollTop = el.scrollHeight;
+}
+
+function agentSubmitTask() {
+  const f = agentState.submitForm;
+  if (!f.prompt.trim()) return;
+  agentWsSend({ type: "task:submit", payload: { title: f.title || "未命名任务", prompt: f.prompt, repo: f.repo || undefined, priority: f.priority } });
+  agentState.submitForm = { title: "", prompt: "", repo: "", priority: 2 };
+  toast("任务已提交", "Cpu");
+}
+
+function agentCancelTask(id) {
+  agentWsSend({ type: "task:cancel", id });
+  toast("取消请求已发送", "X");
+}
+
+function AgentView(data) {
+  const { pending, running, done } = data;
+  const allTasks = [...running, ...pending, ...done];
+  const isLive = agentState.connected;
+
+  return h("div", { class: "page" },
+    // 连接状态卡片
+    Card({},
+      h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:16px" },
+        h("div", { style: "display:flex;align-items:center;gap:12px" },
+          h("span", { class: "dot " + (isLive ? "dot-pass dot-live" : "dot-wake") }),
+          h("span", { style: "font-size:14px;font-weight:600" }, isLive ? "Supervisor 已连接" : "未连接"),
+          isLive ? h("span", { class: "chip" }, "v" + (agentState.version || "?")) : null),
+        h("div", { style: "display:flex;gap:8px" },
+          !isLive ? Btn("连接", { icon: "Cpu", small: true, onClick: agentWsConnect }) : null,
+          h("span", { class: "mono" }, `${running.length} 运行中 · ${pending.length} 等待 · ${done.length} 已完成`)))),
+
+    // 任务提交表单
+    Card({},
+      h("div", { class: "sec-title" }, h("span", { class: "ds-label sec-label" }, "提交新任务")),
+      h("div", { style: "display:flex;flex-direction:column;gap:12px" },
+        h("div", { style: "display:flex;gap:12px" },
+          h("input", { class: "inp", placeholder: "任务标题(可选)", value: agentState.submitForm.title,
+            onInput: (e) => { agentState.submitForm.title = e.target.value; } }),
+          h("select", { class: "inp sel", style: "width:120px",
+            onChange: (e) => { agentState.submitForm.priority = parseInt(e.target.value); } },
+            h("option", { value: "1", selected: agentState.submitForm.priority === 1 }, "P1 紧急"),
+            h("option", { value: "2", selected: agentState.submitForm.priority === 2 }, "P2 正常"),
+            h("option", { value: "3", selected: agentState.submitForm.priority === 3 }, "P3 低"))),
+        h("textarea", { class: "inp", rows: 3, placeholder: "任务描述 — 告诉 agent 你要它做什么(自然语言,如「修复登录页的 XSS 漏洞」)",
+          value: agentState.submitForm.prompt,
+          onInput: (e) => { agentState.submitForm.prompt = e.target.value; },
+          style: "resize:vertical;font-family:var(--font-body);line-height:1.5" }),
+        h("div", { style: "display:flex;gap:12px;align-items:center" },
+          h("input", { class: "inp", placeholder: "仓库路径(可选,默认当前目录)", value: agentState.submitForm.repo,
+            onInput: (e) => { agentState.submitForm.repo = e.target.value; }, style: "flex:1" }),
+          Btn("提交任务", { icon: "Cpu", onClick: agentSubmitTask })))),
+
+    // 实时终端输出
+    Card({},
+      h("div", { class: "sec-title" },
+        h("span", { class: "ds-label sec-label" }, agentState.activeTask ? "实时输出 · " + (agentState.activeTask.title || agentState.activeTask.id) : "实时输出"),
+        agentState.activeTask ? Btn("终止", { small: true, kind: "ghost", icon: "X", onClick: () => agentCancelTask(agentState.activeTask.id) }) : null),
+      h("div", { id: "agent-terminal", class: "agent-terminal" },
+        agentState.outputLines.length === 0
+          ? h("div", { class: "at-placeholder" }, agentState.activeTask ? "等待输出…" : "提交任务后,agent 的实时输出将显示在这里")
+          : null)),
+
+    // 任务队列
+    Card({},
+      h("div", { class: "sec-title" }, h("span", { class: "ds-label sec-label" }, "任务队列")),
+      allTasks.length === 0
+        ? Empty("暂无任务 —— 提交一个任务试试", "Cpu")
+        : h("table", { class: "tbl" },
+          h("thead", null, h("tr", null,
+            h("th", null, "状态"), h("th", null, "标题"), h("th", null, "优先级"), h("th", null, "时间"), h("th", null, "操作"))),
+          h("tbody", null, ...allTasks.slice(0, 30).map((t) => {
+            const statusMap = {
+              running: { cls: "pill-wake", text: "运行中", icon: "Loader" },
+              pending: { cls: "pill-look", text: "等待中", icon: "Clock" },
+              done: { cls: "pill-pass", text: "完成", icon: "Check" },
+              failed: { cls: "pill-wake", text: "失败", icon: "X" },
+              cancelled: { cls: "", text: "已取消", icon: "X" },
+            };
+            const st = statusMap[t.status] || { cls: "", text: t.status, icon: "Circle" };
+            const priMap = { 1: "P1 紧急", 2: "P2", 3: "P3" };
+            return h("tr", null,
+              h("td", null, h("span", { class: "pill " + st.cls }, Icon(st.icon, 11), st.text)),
+              h("td", null, h("span", { style: "font-weight:500" }, t.title || t.id.slice(0, 8)),
+                h("div", { class: "mono", style: "margin-top:2px" }, (t.prompt || "").slice(0, 60) + ((t.prompt || "").length > 60 ? "…" : ""))),
+              h("td", null, h("span", { class: "mono" }, priMap[t.priority] || "P2")),
+              h("td", null, h("span", { class: "mono" }, fmtTime(t.createdAt)),
+                t.durationMs ? h("div", { class: "mono" }, (t.durationMs / 1000).toFixed(1) + "s") : null),
+              h("td", null, t.status === "pending" ? Btn("取消", { small: true, kind: "quiet", onClick: () => agentCancelTask(t.id) }) : null));
+          })))));
+}
+
+// Agent WebSocket 连接在页面加载时自动建立
+setTimeout(agentWsConnect, 500);
 
 /* 启动 */
 render();

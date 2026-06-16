@@ -199,7 +199,7 @@
 
 ## Phase 2 — Core (顺序依赖,依赖 Phase 1)
 
-- [ ] **L05 `src/loop/session.ts` — Session CRUD**
+- [x] **L05 `src/loop/session.ts` — Session CRUD**
   目的:Loop session 的创建、加载、保存、停止、列表。
   读:`src/loop/types.ts` — LoopSession schema。`src/id.ts` — `generateUlid`。`src/hash.ts` — `sha256prefix`。`src/scan.ts` — `taskKeywords`(已 export)。`src/logger.ts` — `logDir()` 获取 `~/.agent-diff-guard` 基础目录。
   建:`src/loop/session.ts` (~200 行) + `src/loop/session.test.ts`。内容:

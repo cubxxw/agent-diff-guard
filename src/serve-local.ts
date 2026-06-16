@@ -8,8 +8,9 @@
 //     每次刷新页面才重新聚合,不主动 push。
 //   - 不写、不删事件,只读。
 
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { readEvents } from "./logger";
 import { ruleRank, timeline, dispositions, overview } from "./stats";
 import { projectUsage, usageOverview, recentSessions } from "./sessions";
@@ -427,6 +428,35 @@ async function handle(req: Request): Promise<Response> {
       description: body.description,
     });
     return jsonResponse({ ok: true, project });
+  }
+
+  // ── 目录浏览 API:让前端面板选择本地目录 ──
+  if (path === "/api/browse-dirs") {
+    const rawDir = url.searchParams.get("path") || homedir();
+    const target = resolve(rawDir);
+    if (!existsSync(target)) {
+      return new Response(JSON.stringify({ ok: false, reason: "路径不存在" }), { status: 400, headers: JSON_HEADERS });
+    }
+    let stat;
+    try { stat = statSync(target); } catch { return new Response(JSON.stringify({ ok: false, reason: "无法访问" }), { status: 400, headers: JSON_HEADERS }); }
+    if (!stat.isDirectory()) {
+      return new Response(JSON.stringify({ ok: false, reason: "不是目录" }), { status: 400, headers: JSON_HEADERS });
+    }
+    let entries: { name: string; path: string; isGitRepo: boolean }[] = [];
+    try {
+      const items = readdirSync(target, { withFileTypes: true });
+      entries = items
+        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 200)
+        .map((d) => {
+          const full = join(target, d.name);
+          return { name: d.name, path: full, isGitRepo: existsSync(join(full, ".git")) };
+        });
+    } catch { /* permission denied etc — return empty */ }
+    const isGitRepo = existsSync(join(target, ".git"));
+    const parent = dirname(target);
+    return jsonResponse({ current: target, parent: parent !== target ? parent : null, dirs: entries, isGitRepo });
   }
 
   // ── 成本/Session API:解析 Claude Code 本地 session 日志(读一次复用) ──

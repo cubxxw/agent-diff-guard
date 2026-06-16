@@ -67,6 +67,10 @@ const ICONS = {
   Crosshair: "M22 12h-4|M6 12H2|M12 6V2|M12 22v-4|M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12z",
   FileWarning: "M14 2v4a2 2 0 0 0 2 2h4|M4 22V4a2 2 0 0 1 2-2h8l6 6v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z|M12 9v4|M12 17h.01",
   Terminal: "M4 17l6-6-6-6|M12 19h8",
+  FolderOpen: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
+  ChevronRight: "m9 18 6-6-6-6",
+  ChevronUp: "m18 15-6-6-6 6",
+  GitBranch: "M6 3v12|M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M18 9a9 9 0 0 1-9 9",
 };
 function Icon(name, size = 16, style) {
   const wrap = h("span", { class: "ic", style });
@@ -872,7 +876,68 @@ function UsageView({ today, daily, projects, sessions, ov }) {
 }
 
 // ── 8a. 项目管理(Projects) ──
-const projState = { editing: null, form: { name: "", cwd: "", permissionMode: "default", description: "" } };
+const projState = { editing: null, form: { name: "", cwd: "", permissionMode: "default", description: "" }, browser: { open: false, target: null, loading: false, current: "", parent: null, dirs: [], isGitRepo: false } };
+
+function openDirBrowser(target) {
+  projState.browser = { open: true, target, loading: true, current: "", parent: null, dirs: [], isGitRepo: false };
+  PAGES.projects();
+  browseTo();
+}
+async function browseTo(dirPath) {
+  projState.browser.loading = true;
+  PAGES.projects();
+  try {
+    const qs = dirPath ? "?path=" + encodeURIComponent(dirPath) : "";
+    const data = await api("/api/browse-dirs" + qs);
+    projState.browser = { ...projState.browser, loading: false, current: data.current, parent: data.parent, dirs: data.dirs, isGitRepo: data.isGitRepo };
+  } catch (e) {
+    projState.browser.loading = false;
+    toast("无法浏览目录: " + e.message, "TriangleAlert");
+  }
+  PAGES.projects();
+}
+function selectDir(dirPath) {
+  const target = projState.browser.target;
+  projState.form.cwd = dirPath;
+  if (target === "add" && !projState.form.name.trim()) {
+    const parts = dirPath.split("/").filter(Boolean);
+    projState.form.name = parts[parts.length - 1] || "";
+  }
+  projState.browser = { open: false, target: null, loading: false, current: "", parent: null, dirs: [], isGitRepo: false };
+  PAGES.projects();
+}
+function closeBrowser() {
+  projState.browser = { open: false, target: null, loading: false, current: "", parent: null, dirs: [], isGitRepo: false };
+  PAGES.projects();
+}
+function DirBrowser() {
+  const b = projState.browser;
+  if (!b.open) return h("span");
+  const overlay = h("div", { class: "dir-overlay", onClick: (e) => { if (e.target === overlay) closeBrowser(); } },
+    h("div", { class: "dir-modal" },
+      h("div", { class: "dir-header" },
+        h("div", { class: "dir-title" }, Icon("FolderOpen", 18), " 选择项目目录"),
+        h("button", { class: "dir-close", onClick: closeBrowser }, Icon("X", 16))),
+      h("div", { class: "dir-path-bar" },
+        b.parent ? h("button", { class: "dir-up", onClick: () => browseTo(b.parent), title: "上级目录" }, Icon("ChevronUp", 14), " 上级") : null,
+        h("span", { class: "dir-current mono" }, b.current),
+        b.isGitRepo ? h("span", { class: "pill pill-pass", style: { marginLeft: "8px", fontSize: "11px" } }, Icon("GitBranch", 12), " Git") : null),
+      h("div", { class: "dir-select-bar" },
+        Btn("选择此目录", { icon: "Check", onClick: () => selectDir(b.current) }),
+        h("span", { class: "dir-hint mono" }, b.current)),
+      b.loading
+        ? h("div", { class: "dir-loading" }, "加载中…")
+        : h("div", { class: "dir-list" },
+            b.dirs.length === 0
+              ? h("div", { class: "dir-empty" }, "此目录下没有子目录")
+              : b.dirs.map((d) =>
+                  h("div", { class: "dir-item" + (d.isGitRepo ? " dir-git" : ""), onClick: () => browseTo(d.path) },
+                    Icon(d.isGitRepo ? "GitBranch" : "FolderOpen", 15),
+                    h("span", { class: "dir-name" }, d.name),
+                    d.isGitRepo ? h("span", { class: "pill pill-pass", style: { fontSize: "10px" } }, "git") : null,
+                    h("span", { class: "dir-arrow" }, Icon("ChevronRight", 14)))))));
+  return overlay;
+}
 const PERM_LABELS = { default: ["只读观察", "pill-pass"], acceptEdits: ["自动编辑", "pill-look"], bypassPermissions: ["完全自主", "pill-wake"] };
 const PERM_OPTIONS = [["default", "default · 只读观察"], ["acceptEdits", "acceptEdits · 自动编辑"], ["bypassPermissions", "bypassPermissions · 完全自主"]];
 
@@ -931,7 +996,9 @@ function ProjectsView(projects) {
     SectionTitle("添加项目", "注册一个工作目录,daemon 执行时自动 cd 到这里"),
     h("div", { class: "proj-form" },
       h("input", { class: "inp", placeholder: "项目名称", value: projState.form.name, onInput: (e) => projState.form.name = e.target.value, onKeydown: (e) => { if (e.key === "Enter") addProject(); } }),
-      h("input", { class: "inp", placeholder: "/path/to/your/repo", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 2 }, onKeydown: (e) => { if (e.key === "Enter") addProject(); } }),
+      h("div", { style: { display: "flex", flex: 2, gap: "4px" } },
+        h("input", { class: "inp", placeholder: "/path/to/your/repo", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 1 }, onKeydown: (e) => { if (e.key === "Enter") addProject(); } }),
+        Btn("浏览", { icon: "FolderOpen", kind: "ghost", onClick: () => openDirBrowser("add") })),
       permSelect(projState.form.permissionMode, (v) => projState.form.permissionMode = v),
       Btn("添加", { icon: "Plus", onClick: addProject })),
     h("div", { class: "proj-form", style: { marginTop: "8px" } },
@@ -947,7 +1014,9 @@ function ProjectsView(projects) {
           return Card({ class: "proj-card proj-editing" },
             h("div", { class: "proj-form" },
               h("input", { class: "inp", value: projState.form.name, onInput: (e) => projState.form.name = e.target.value }),
-              h("input", { class: "inp", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 2 } }),
+              h("div", { style: { display: "flex", flex: 2, gap: "4px" } },
+                h("input", { class: "inp", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 1 } }),
+                Btn("浏览", { small: true, icon: "FolderOpen", kind: "ghost", onClick: () => openDirBrowser("edit") })),
               permSelect(projState.form.permissionMode, (v) => projState.form.permissionMode = v)),
             h("div", { class: "proj-form", style: { marginTop: "8px" } },
               h("input", { class: "inp", value: projState.form.description, placeholder: "描述(可选)", onInput: (e) => projState.form.description = e.target.value, style: { flex: 1 } }),
@@ -975,7 +1044,7 @@ function ProjectsView(projects) {
       Stat(favN, "收藏", "快速访问"),
       Stat(editN, "自动编辑", "acceptEdits 模式"),
       Stat(bypassN, "完全自主", "bypassPermissions 模式", bypassN > 0 ? "error" : undefined)),
-    addForm, projectCards);
+    addForm, projectCards, DirBrowser());
 }
 
 const INBOX_STATUS = { pending: ["待终端取走", "pill-look", "Clock"], done: ["已执行 · 已归档", "pill-pass", "Check"] };

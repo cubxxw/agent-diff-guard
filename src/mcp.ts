@@ -23,6 +23,7 @@ import { readEvents } from "./logger";
 import { allTranscripts } from "./transcript";
 import { buildAllInsights } from "./insights";
 import { listPending } from "./inbox";
+import { registerLoopTools } from "./loop-mcp";
 
 /** 取某目录的 git remote 去敏标识(host+path),取不到返回 null。 */
 function repoRemote(cwd: string): string | null {
@@ -151,6 +152,9 @@ server.registerTool(
     return text(`${items.length} 条待处理决策:\n\n${out.join("\n\n")}`);
   }
 );
+
+// ── Loop Guard tools ─────────────────────────────────────────────────
+registerLoopTools(server);
 
 // ── 启动:stdio transport ─────────────────────────────────────────────
 async function main(): Promise<void> {

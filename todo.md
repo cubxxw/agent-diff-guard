@@ -297,7 +297,7 @@
   同时在 HELP 字符串追加 `  agent-diff-guard loop [子命令]     Loop 验证层:start/check/status/report/stop/list`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts loop list 2>&1 | grep -vq '未知命令' && echo PASS || echo FAIL`
 
-- [ ] **L13 `src/mcp.ts` 注册 loop tools**
+- [x] **L13 `src/mcp.ts` 注册 loop tools**
   目的:MCP server 暴露 guard_loop_iteration 和 loop_status。
   读:`src/mcp.ts` — Tool 4 结束后、main() 前。顶部 import 区。
   改:顶部加 `import { registerLoopTools } from "./loop-mcp";`。Tool 4 块后加 `registerLoopTools(server);`。

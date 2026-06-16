@@ -180,7 +180,7 @@
   - 边界:空数组返回 0
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/loop/drift.test.ts 2>&1 | tail -1 | grep -q ' 0 fail' && echo PASS || echo FAIL`
 
-- [ ] **L04 `src/loop/budget.ts` — Token 预算守护**
+- [x] **L04 `src/loop/budget.ts` — Token 预算守护**
   目的:提供预算状态判定函数。
   读:`src/sessions.ts:14-27` — `PRICE_PER_MTOK` 定价表 + `modelFamily()` 归一。`src/sessions.ts:28-50` — `ProjectUsage`/`SessionUsage` 接口。读 `docs/LOOP-DESIGN.md` §4 budget.ts spec。
   建:`src/loop/budget.ts` (~120 行) + `src/loop/budget.test.ts`。内容:

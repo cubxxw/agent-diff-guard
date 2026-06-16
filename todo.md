@@ -313,7 +313,7 @@
 
 ## Phase 5 — Integration Test
 
-- [ ] **L15 端到端集成测试:loop start → check × 3 → report → stop**
+- [x] **L15 端到端集成测试:loop start → check × 3 → report → stop**
   目的:验证完整 loop 生命周期。
   读:所有 `src/loop/*.ts` + `src/loop-cli.ts`。
   建:`src/loop/integration.test.ts` (~150 行)。用 `$ADG_HOME` 指向 tmpdir。在有 git history 的 temp repo 中:

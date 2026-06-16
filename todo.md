@@ -260,7 +260,7 @@
   依赖:import from `./loop/session`, `./loop/check`, `./loop/report`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun run src/cli.ts loop --help 2>&1 | grep -q 'loop' && echo PASS || echo FAIL`
 
-- [ ] **L10 `src/loop-mcp.ts` — MCP tool registration**
+- [x] **L10 `src/loop-mcp.ts` — MCP tool registration**
   目的:注册 `guard_loop_iteration` 和 `loop_status` 两个 MCP tools。
   读:`src/mcp.ts` — 现有 tool 注册模式(server.registerTool + z.object inputSchema)。`docs/LOOP-DESIGN.md` §5 MCP tools spec。
   建:`src/loop-mcp.ts` (~180 行)。内容:

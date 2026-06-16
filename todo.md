@@ -270,7 +270,7 @@
   依赖:import `McpServer` from `@modelcontextprotocol/sdk`, `z` from `zod`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun -e "import { registerLoopTools } from './src/loop-mcp'; console.log('export ok:', typeof registerLoopTools)" 2>&1 | grep -q 'export ok: function' && echo PASS || echo FAIL`
 
-- [ ] **L11 `src/loop/hook.ts` — PostToolUse hook adapter**
+- [x] **L11 `src/loop/hook.ts` — PostToolUse hook adapter**
   目的:< 500ms Claude Code PostToolUse hook。
   读:`src/loop/check.ts` — quickCheck。
   建:`src/loop/hook.ts` (~100 行) + `hooks/post-tool-use` (shell shim)。内容:

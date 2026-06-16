@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# PostToolUse hook shim — pipes stdin to the loop guard hook
+exec bun run "$(dirname "$0")/../src/loop/hook.ts"

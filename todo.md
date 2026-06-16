@@ -161,7 +161,7 @@
   依赖:只 import `zod`(已在 package.json)。不 import 项目内其他模块(纯类型文件)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun -e "import { LoopSessionSchema, IterationResultSchema } from './src/loop/types'; console.log('schemas ok:', typeof LoopSessionSchema.parse, typeof IterationResultSchema.parse)" 2>&1 | grep -q 'schemas ok' && echo PASS || echo FAIL`
 
-- [ ] **L03 `src/loop/drift.ts` — 累积漂移检测引擎**
+- [x] **L03 `src/loop/drift.ts` — 累积漂移检测引擎**
   目的:Loop 跨轮累积漂移检测。每轮算本轮 drift,EMA 累积,全局 goalRelevance。
   读:`src/scan.ts:61-69` — `taskKeywords` 实现(拉丁词 ≥4 字 + CJK ≥2 字)。读 `docs/LOOP-DESIGN.md` §4 drift.ts spec。
   建:`src/loop/drift.ts` (~140 行) + `src/loop/drift.test.ts`。内容:

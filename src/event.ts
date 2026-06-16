@@ -59,6 +59,8 @@ export interface GuardEvent {
   // 团队字段:显式 opt-in 后才填(MVP 阶段均为 null)
   authorHash: string | null; // sha256(git email) 前 16 位
   repoAlias: string | null;
+
+  loopSessionId?: string;
 }
 
 const WHY_MAX = 80;
@@ -83,6 +85,7 @@ export interface BuildEventOpts {
   disposition: DispositionKind;
   /** git remote origin(已去敏),null 表示取不到 */
   repoRemote?: string | null;
+  loopSessionId?: string;
   nowMs?: number; // 可注入用于测试
 }
 
@@ -111,5 +114,6 @@ export async function buildEvent(o: BuildEventOpts): Promise<GuardEvent> {
     disposition: o.disposition,
     authorHash: null, // MVP:未启用团队模式
     repoAlias: null,
+    ...(o.loopSessionId ? { loopSessionId: o.loopSessionId } : {}),
   };
 }

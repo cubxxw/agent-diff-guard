@@ -303,7 +303,7 @@
   改:顶部加 `import { registerLoopTools } from "./loop-mcp";`。Tool 4 块后加 `registerLoopTools(server);`。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && grep -q 'registerLoopTools' src/mcp.ts && echo PASS || echo FAIL`
 
-- [ ] **L14 `src/event.ts` 加 loopSessionId 可选字段**
+- [x] **L14 `src/event.ts` 加 loopSessionId 可选字段**
   目的:GuardEvent 关联 loop session,供审计查询。
   读:`src/event.ts:45-62` — GuardEvent interface。
   改:`repoAlias: string | null;` 后加 `loopSessionId?: string;`。`BuildEventOpts` 加同名字段,函数体赋值。

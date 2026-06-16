@@ -342,7 +342,7 @@
   依赖：无新依赖，只在 MCP response JSON 中加字段。
   参考：Datadog MCP 协议级追踪已确认自动追踪 MCP tool calls（2-0 验证）。
 
-- [ ] **LE-02 loop-events.jsonl hash chaining（tamper-evident 审计日志）**
+- [x] **LE-02 loop-events.jsonl hash chaining（tamper-evident 审计日志）**
   目的：满足 EU AI Act 对 append-only、tamper-evident 审计日志的要求（SHA-256 hash chaining，6 月最低保留期）。
   改：`src/logger.ts`（或新建 `src/loop/audit.ts`）每条日志加 `previousHash: string` 字段，值为上一条日志的 SHA-256 hex prefix。首条日志 previousHash 为 `"genesis"`。
   验证：读 loop-events.jsonl → 逐行验证 hash chain 完整性。
@@ -390,7 +390,7 @@
   CLI 子命令：`agent-diff-guard loop audit --json`
   评估：向 cobusgreyling/loop-engineering 提交 PR 支持 plugin 机制。
 
-- [ ] **LE-08 Ralph 循环 between-iteration gate 增强**
+- [x] **LE-08 Ralph 循环 between-iteration gate 增强**
   目的：Ralph 循环每轮 fresh context，状态全在磁盘上，天然需要外部验证层。
   改：在 `docs/LOOP-DESIGN.md` 第 5 节已有的 shell 集成示例基础上：
   - `src/loop/ralph-adapter.ts`（~100L）：读 `IMPLEMENTATION_PLAN.md` → 提取当前 task → 跟 drift goalKeywords 对齐
@@ -422,7 +422,7 @@
   - 时间范围筛选（默认 6 个月）
   CLI 子命令：`agent-diff-guard loop export --format jsonld --since 2026-01-01`
 
-- [ ] **LE-12 Morning Triage Loop skill 模板**
+- [x] **LE-12 Morning Triage Loop skill 模板**
   目的：提供一个开箱即用的 Claude Code skill，实现 Osmani 框架的标准 morning triage loop 形状。
   建：`.claude/skills/morning-guard-triage/SKILL.md`
   - 读昨日 loop session → 生成 report → 高风险项进审查队列

@@ -224,7 +224,7 @@
   测试覆盖:用 mock deps 注入 parseDiff 结果。无 findings+drift pass+budget pass → verdict "pass"。有 wake finding → "block"。drift warn+budget pass → "warn"。quickCheck 对敏感路径返回 warn。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/loop/check.test.ts 2>&1 | tail -1 | grep -q ' 0 fail' && echo PASS || echo FAIL`
 
-- [ ] **L07 `src/loop/overnight.ts` — 无人值守模式**
+- [x] **L07 `src/loop/overnight.ts` — 无人值守模式**
   目的:unattended 模式下静默收集 block,紧急制动条件触发真正停止。
   读:`src/loop/types.ts` — LoopSession, IterationResult。`src/loop/session.ts` — saveSession。`src/logger.ts` — logDir(PAUSE 文件路径)。`src/runner.ts:~20-30` — PAUSE kill-switch 约定。
   建:`src/loop/overnight.ts` (~120 行) + `src/loop/overnight.test.ts`。内容:

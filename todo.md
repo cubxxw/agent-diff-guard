@@ -239,7 +239,7 @@
 
 ## Phase 3 — Interfaces (可并行,依赖 Phase 2)
 
-- [ ] **L08 `src/loop/report.ts` — 晨报生成器**
+- [x] **L08 `src/loop/report.ts` — 晨报生成器**
   目的:从 LoopSession 状态生成 MorningReport。
   读:`src/loop/types.ts` — LoopSession, MorningReport。`docs/LOOP-DESIGN.md` §4 report.ts spec。
   建:`src/loop/report.ts` (~180 行) + `src/loop/report.test.ts`。内容:

@@ -361,7 +361,7 @@
 
 ### 中期（1-2 月）：差异化建设
 
-- [ ] **LE-05 语义级漂移检测 v1（TF-IDF）**
+- [x] **LE-05 语义级漂移检测 v1（TF-IDF）**
   目的：当前 drift.ts 基于文件名 vs 关键词的词面匹配，对"optimization drift"（agent 对不完美 spec 的渐进偏离）检测不足。
   改：`src/loop/drift.ts` 新增 `semanticDriftScore(diffContent: string, goalText: string): number`。
   用 TF-IDF（纯 JS 实现，无外部依赖）对比 diff 内容与 goal 的语义距离。
@@ -398,7 +398,7 @@
   - 在 `loop check` 输出中加 ralph-specific 字段（current_task、plan_alignment_score）
   参考：Ralphify 是 Ralph 循环的最活跃 CLI wrapper。
 
-- [ ] **LE-09 多 agent 协同漂移叠加检测**
+- [x] **LE-09 多 agent 协同漂移叠加检测**
   目的：Gas Town 场景下，多个 agent 各自偏离 10% 但方向一致，合计可能已经偏了 40%——需要向量级的漂移叠加检测。
   改：`src/loop/drift.ts` 新增 `multiAgentDriftVector(sessions: LoopSession[]): { magnitude: number; direction: string; agents: string[] }`。
   将每个 session 的 drift 表示为方向向量（基于变更文件的类别分布），检测方向一致性。
@@ -414,7 +414,7 @@
   推动社区采纳：写 spec 文档 + 示例模板。
   参考：多个来源共同指向 loop 需要"合同"式的声明性定义。
 
-- [ ] **LE-11 EU AI Act compliance export**
+- [x] **LE-11 EU AI Act compliance export**
   目的：一键导出符合审计要求的 loop 执行记录（依赖 LE-02 hash chaining 先完成）。
   建：`src/loop/compliance-export.ts`（~200L）
   - 导出格式：JSON-LD 或 CSV，包含六大审计类别（Identity / Input-Prompt / Tool Invocations / Decision Points / Outputs / Latency-Metadata）
@@ -430,7 +430,7 @@
   - 结果汇总到 Slack/Linear（通过 MCP connector）
   依赖：report.ts 晨报已实现，需 MCP connector 配置。
 
-- [ ] **LE-13 语义级漂移检测 v2（Embedding）**
+- [x] **LE-13 语义级漂移检测 v2（Embedding）**
   目的：LE-05 的升级版，用轻量 embedding 模型替代 TF-IDF，提高语义漂移检测精度。
   改：`src/loop/drift.ts` 的 `semanticDriftScore()` 支持可选的 embedding 后端：
   - 本地模式：sentence-transformers（通过 ONNX runtime，纯 JS）

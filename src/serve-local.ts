@@ -22,6 +22,7 @@ import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
 import { detectViolations, summarizeViolations, type Violation } from "./violations";
 import { writeDecision, listPending, listDone } from "./inbox";
+import { listProjects, createProject, updateProject, deleteProject, type PermissionMode } from "./projects";
 import { listRuns, listBlocked } from "./runlog";
 import { buildQueue } from "./findings";
 import { repoHistory, staticZones } from "./context";
@@ -29,7 +30,7 @@ import { repoHistory, staticZones } from "./context";
 const JSON_HEADERS = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*", // 本地面板跨端口读取
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
@@ -352,7 +353,7 @@ async function handle(req: Request): Promise<Response> {
 
   // ── 信箱写入 API:把面板上的用户决策写成指令,等终端 Claude Code 来取 ──
   if (path === "/api/inbox/decision" && req.method === "POST") {
-    const body = await readJsonBody<{ title?: string; action?: string; context?: Record<string, unknown> }>(req);
+    const body = await readJsonBody<{ title?: string; action?: string; projectId?: string; context?: Record<string, unknown> }>(req);
     if (body === null) {
       return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
     }
@@ -362,9 +363,70 @@ async function handle(req: Request): Promise<Response> {
     const item = writeDecision({
       title: typeof body.title === "string" ? body.title : "未命名决策",
       action: body.action,
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
       context: (body.context as never) ?? {},
     });
     return jsonResponse({ ok: true, id: item.id });
+  }
+
+  // ── Projects CRUD API:项目注册、管理、收藏 ──
+  // PUT/DELETE 带 :id 的路由放在 GET/POST 前面,避免前缀匹配冲突
+  if (path.startsWith("/api/projects/") && req.method === "PUT") {
+    const id = path.slice("/api/projects/".length);
+    if (!id) return new Response(JSON.stringify({ ok: false, reason: "缺少项目 ID" }), { status: 400, headers: JSON_HEADERS });
+    const body = await readJsonBody<Record<string, unknown>>(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const patch: Record<string, unknown> = {};
+    if (typeof body.name === "string") patch.name = body.name;
+    if (typeof body.cwd === "string") patch.cwd = body.cwd;
+    if (typeof body.description === "string") patch.description = body.description;
+    if (typeof body.favorite === "boolean") patch.favorite = body.favorite;
+    const validModes: PermissionMode[] = ["default", "acceptEdits", "bypassPermissions"];
+    if (typeof body.permissionMode === "string" && validModes.includes(body.permissionMode as PermissionMode)) {
+      patch.permissionMode = body.permissionMode;
+    }
+    const updated = updateProject(id, patch as Parameters<typeof updateProject>[1]);
+    if (!updated) return new Response(JSON.stringify({ ok: false, reason: "项目不存在" }), { status: 404, headers: JSON_HEADERS });
+    return jsonResponse({ ok: true, project: updated });
+  }
+
+  if (path.startsWith("/api/projects/") && req.method === "DELETE") {
+    const id = path.slice("/api/projects/".length);
+    if (!id) return new Response(JSON.stringify({ ok: false, reason: "缺少项目 ID" }), { status: 400, headers: JSON_HEADERS });
+    const ok = deleteProject(id);
+    if (!ok) return new Response(JSON.stringify({ ok: false, reason: "项目不存在" }), { status: 404, headers: JSON_HEADERS });
+    return jsonResponse({ ok: true });
+  }
+
+  if (path === "/api/projects" && req.method === "GET") {
+    const all = listProjects();
+    const sorted = [...all].sort((a, b) => {
+      if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
+    return jsonResponse(sorted);
+  }
+
+  if (path === "/api/projects" && req.method === "POST") {
+    const body = await readJsonBody<{ name?: string; cwd?: string; permissionMode?: string; favorite?: boolean; description?: string }>(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!body.name || typeof body.name !== "string" || !body.cwd || typeof body.cwd !== "string") {
+      return new Response(JSON.stringify({ ok: false, reason: "缺少 name 或 cwd" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const validModes: PermissionMode[] = ["default", "acceptEdits", "bypassPermissions"];
+    const mode = validModes.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : "default";
+    const project = createProject({
+      name: body.name,
+      cwd: body.cwd,
+      permissionMode: mode,
+      favorite: body.favorite ?? false,
+      description: body.description,
+    });
+    return jsonResponse({ ok: true, project });
   }
 
   // ── 成本/Session API:解析 Claude Code 本地 session 日志(读一次复用) ──

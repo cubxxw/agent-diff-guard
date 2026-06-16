@@ -224,6 +224,7 @@ const NAV = [
   ]},
   { group: "用量 USAGE", items: [{ id: "usage", label: "用量与成本", en: "COST", icon: "Activity" }] },
   { group: "闭环 LOOP", items: [
+    { id: "projects", label: "项目", en: "PROJECTS", icon: "HardDrive" },
     { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" },
     { id: "runlog", label: "执行记录", en: "EXEC LOG", icon: "Terminal" },
   ]},
@@ -236,6 +237,7 @@ const PAGE_TITLE = {
   flight: ["越界记录", "agent 有没有违反人定下的规矩(飞行黑匣子:只记录、不阻断)"],
   danger: ["危险地图", "把守门人的判断,变成 agent 编码前的输入"],
   usage: ["用量与成本", "一个人 × N 个 agent,烧了多少"],
+  projects: ["项目", "注册项目:给每个仓库配工作目录与权限级别,daemon 自动路由"],
   inbox: ["终端信箱", "面板裁决 → 指令 → 终端 agent 取走执行"],
   runlog: ["执行记录", "daemon 每一次执行与拦截的完整留痕"],
 };
@@ -405,7 +407,13 @@ const PAGES = {
     }),
 
   queue: () => loadPage(
-    async () => state.cache.findings || (state.cache.findings = await api("/api/findings")),
+    async () => {
+      const [findings] = await Promise.all([
+        state.cache.findings ? Promise.resolve(state.cache.findings) : api("/api/findings").then(f => (state.cache.findings = f)),
+        queueState._projects.length ? Promise.resolve() : api("/api/projects").then(ps => { queueState._projects = ps || []; }).catch(() => {}),
+      ]);
+      return findings;
+    },
     (findings) => QueueView(findings),
     h("div", { class: "queue-grid" }, h("div", { class: "skel", style: { height: "200px", borderRadius: "14px" } }), h("div", { class: "skel", style: { height: "400px", borderRadius: "14px" } }))),
 
@@ -427,6 +435,7 @@ const PAGES = {
       return { today, daily, projects, sessions, ov };
     },
     (d) => UsageView(d)),
+  projects: () => loadPage(() => api("/api/projects"), (projects) => ProjectsView(projects)),
   inbox: () => loadPage(() => api("/api/inbox/list"), (items) => InboxView(items)),
   runlog: () => loadPage(() => api("/api/runlog"), (data) => RunlogView(data)),
 };
@@ -440,7 +449,7 @@ const DECISION_LABEL = {
   fp: { text: "已标记误报 · 喂给规则校准", cls: "pill-look", icon: "Scale" },
 };
 
-const queueState = { filter: "all", sel: null, reasonFor: null, reason: "" };
+const queueState = { filter: "all", sel: null, reasonFor: null, reason: "", projectId: "", _projects: [] };
 function QueueView(findings) {
   const pending = findings.filter((f) => !state.decisions[f.id]);
   const done = findings.filter((f) => state.decisions[f.id]);
@@ -453,12 +462,14 @@ function QueueView(findings) {
   const confirmApprove = (f) => { decide(f.id, { kind: "approved", note: queueState.reason || "未填理由", time: "刚刚" }); queueState.reasonFor = null; queueState.reason = ""; toast("已放行并留痕", "Check"); };
   const reject = async (f) => {
     decide(f.id, { kind: "rejected", note: "已写指令进终端信箱", time: "刚刚" });
+    const body = {
+      title: `驳回:撤销 ${f.file} 的改动`,
+      action: `git checkout origin/main -- ${f.file}  # 与任务「${truncate(f.task, 40)}」无关,已被守门人驳回`,
+      context: { rules: [f.rule], note: f.reason, urgency: f.level === "wake" ? "high" : "medium", source: "审查队列" },
+    };
+    if (queueState.projectId) body.projectId = queueState.projectId;
     try {
-      await api("/api/inbox/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        title: `驳回:撤销 ${f.file} 的改动`,
-        action: `git checkout origin/main -- ${f.file}  # 与任务「${truncate(f.task, 40)}」无关,已被守门人驳回`,
-        context: { rules: [f.rule], note: f.reason, urgency: f.level === "wake" ? "high" : "medium", source: "审查队列" },
-      })});
+      await api("/api/inbox/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       toast("已驳回 · 指令已落终端信箱", "CornerUpLeft");
     } catch (e) { toast("信箱写入失败:" + e.message, "TriangleAlert"); }
   };
@@ -505,6 +516,9 @@ function QueueDetail(c, { confirmApprove, reject }) {
             Btn("确认放行", { small: true, icon: "Check", onClick: () => confirmApprove(c) }),
             Btn("取消", { small: true, kind: "quiet", onClick: () => { queueState.reasonFor = null; PAGES.queue(); } }))
         : h("div", { class: "qd-actions" },
+            queueState._projects.length > 0 && h("select", { class: "inp", style: { width: "auto", minWidth: "140px", fontSize: "13px" }, value: queueState.projectId, onChange: (e) => { queueState.projectId = e.target.value; } },
+              h("option", { value: "" }, "目标项目(可选)"),
+              ...queueState._projects.map((p) => h("option", { value: p.id }, (p.favorite ? "★ " : "") + p.name))),
             Btn("放行", { icon: "Check", kind: "ghost", onClick: () => { queueState.reasonFor = c.id; PAGES.queue(); } }),
             Btn("驳回 · 发回终端修复", { icon: "CornerUpLeft", onClick: () => reject(c) }),
             Btn("标记误报", { icon: "Scale", kind: "quiet", onClick: () => { state.decisions[c.id] = { kind: "fp", note: "进入规则校准语料", time: "刚刚" }; persistDecisions(); PAGES.queue(); rerenderNavBadges(); toast("已标记误报", "Scale"); } })));
@@ -855,6 +869,113 @@ function UsageView({ today, daily, projects, sessions, ov }) {
             h("td", { class: "num" }, h("span", { class: "mono" }, fmtK(s.outputTokens))),
             h("td", { class: "num" }, h("span", { class: "mono" }, "$" + s.estCostUsd.toFixed(1)))))),
       h("p", { class: "foot-note", style: { marginTop: "12px", marginBottom: 0 } }, `共 ${ov.totalSessions} 个 session · ${ov.totalProjects} 个项目 · 成本为按模型单价的估算,非账单级精确 · 数据来自本机 session 日志,不上传。`)))));
+}
+
+// ── 8a. 项目管理(Projects) ──
+const projState = { editing: null, form: { name: "", cwd: "", permissionMode: "default", description: "" } };
+const PERM_LABELS = { default: ["只读观察", "pill-pass"], acceptEdits: ["自动编辑", "pill-look"], bypassPermissions: ["完全自主", "pill-wake"] };
+const PERM_OPTIONS = [["default", "default · 只读观察"], ["acceptEdits", "acceptEdits · 自动编辑"], ["bypassPermissions", "bypassPermissions · 完全自主"]];
+
+function ProjectsView(projects) {
+  const favN = projects.filter((p) => p.favorite).length;
+  const editN = projects.filter((p) => p.permissionMode === "acceptEdits").length;
+  const bypassN = projects.filter((p) => p.permissionMode === "bypassPermissions").length;
+
+  const resetForm = () => { projState.form = { name: "", cwd: "", permissionMode: "default", description: "" }; };
+  const addProject = async () => {
+    const { name, cwd, permissionMode, description } = projState.form;
+    if (!name.trim() || !cwd.trim()) { toast("请填写项目名称和目录路径", "TriangleAlert"); return; }
+    try {
+      await api("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), cwd: cwd.trim(), permissionMode, description: description.trim() || undefined }) });
+      resetForm();
+      toast("项目已添加", "Check");
+      PAGES.projects();
+    } catch (e) { toast("添加失败:" + e.message, "TriangleAlert"); }
+  };
+  const toggleFav = async (p) => {
+    try {
+      await api("/api/projects/" + p.id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ favorite: !p.favorite }) });
+      PAGES.projects();
+    } catch (e) { toast("操作失败:" + e.message, "TriangleAlert"); }
+  };
+  const removeProject = async (p) => {
+    if (!confirm(`确定删除项目「${p.name}」?`)) return;
+    try {
+      await api("/api/projects/" + p.id, { method: "DELETE" });
+      toast("已删除", "Check");
+      PAGES.projects();
+    } catch (e) { toast("删除失败:" + e.message, "TriangleAlert"); }
+  };
+  const startEdit = (p) => {
+    projState.editing = p.id;
+    projState.form = { name: p.name, cwd: p.cwd, permissionMode: p.permissionMode, description: p.description || "" };
+    PAGES.projects();
+  };
+  const saveEdit = async (p) => {
+    const { name, cwd, permissionMode, description } = projState.form;
+    if (!name.trim() || !cwd.trim()) { toast("名称和路径不能为空", "TriangleAlert"); return; }
+    try {
+      await api("/api/projects/" + p.id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), cwd: cwd.trim(), permissionMode, description: description.trim() || undefined }) });
+      projState.editing = null;
+      resetForm();
+      toast("已保存", "Check");
+      PAGES.projects();
+    } catch (e) { toast("保存失败:" + e.message, "TriangleAlert"); }
+  };
+  const cancelEdit = () => { projState.editing = null; resetForm(); PAGES.projects(); };
+
+  const permSelect = (val, onChange) => h("select", { class: "inp", style: { width: "auto", minWidth: "180px" }, value: val, onChange: (e) => onChange(e.target.value) },
+    ...PERM_OPTIONS.map(([v, label]) => h("option", { value: v, selected: val === v }, label)));
+
+  const addForm = Card({ class: "proj-add" },
+    SectionTitle("添加项目", "注册一个工作目录,daemon 执行时自动 cd 到这里"),
+    h("div", { class: "proj-form" },
+      h("input", { class: "inp", placeholder: "项目名称", value: projState.form.name, onInput: (e) => projState.form.name = e.target.value, onKeydown: (e) => { if (e.key === "Enter") addProject(); } }),
+      h("input", { class: "inp", placeholder: "/path/to/your/repo", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 2 }, onKeydown: (e) => { if (e.key === "Enter") addProject(); } }),
+      permSelect(projState.form.permissionMode, (v) => projState.form.permissionMode = v),
+      Btn("添加", { icon: "Plus", onClick: addProject })),
+    h("div", { class: "proj-form", style: { marginTop: "8px" } },
+      h("input", { class: "inp", placeholder: "描述(可选)", value: projState.form.description, onInput: (e) => projState.form.description = e.target.value, style: { flex: 1 }, onKeydown: (e) => { if (e.key === "Enter") addProject(); } })));
+
+  const projectCards = projects.length === 0
+    ? Card({}, Empty("还没有注册任何项目 — 添加一个后,信箱决策可自动路由到对应目录执行。", "HardDrive"))
+    : h("div", { class: "proj-list" }, ...projects.map((p) => {
+        const [permLabel, permCls] = PERM_LABELS[p.permissionMode] || PERM_LABELS.default;
+        const isEditing = projState.editing === p.id;
+
+        if (isEditing) {
+          return Card({ class: "proj-card proj-editing" },
+            h("div", { class: "proj-form" },
+              h("input", { class: "inp", value: projState.form.name, onInput: (e) => projState.form.name = e.target.value }),
+              h("input", { class: "inp", value: projState.form.cwd, onInput: (e) => projState.form.cwd = e.target.value, style: { flex: 2 } }),
+              permSelect(projState.form.permissionMode, (v) => projState.form.permissionMode = v)),
+            h("div", { class: "proj-form", style: { marginTop: "8px" } },
+              h("input", { class: "inp", value: projState.form.description, placeholder: "描述(可选)", onInput: (e) => projState.form.description = e.target.value, style: { flex: 1 } }),
+              Btn("保存", { small: true, icon: "Check", onClick: () => saveEdit(p) }),
+              Btn("取消", { small: true, kind: "quiet", onClick: cancelEdit })));
+        }
+
+        return Card({ class: "proj-card" },
+          h("div", { class: "proj-top" },
+            h("div", { class: "proj-title-row" },
+              h("button", { class: "proj-star" + (p.favorite ? " on" : ""), onClick: () => toggleFav(p), title: p.favorite ? "取消收藏" : "收藏" }, p.favorite ? "★" : "☆"),
+              h("div", { class: "proj-name" }, p.name),
+              h("span", { class: "pill " + permCls }, permLabel)),
+            h("div", { class: "proj-actions" },
+              Btn("编辑", { small: true, kind: "ghost", icon: "Edit3", onClick: () => startEdit(p) }),
+              Btn("删除", { small: true, kind: "quiet", icon: "Trash2", onClick: () => removeProject(p) }))),
+          h("div", { class: "proj-cwd mono" }, p.cwd),
+          p.description && h("div", { class: "proj-desc" }, p.description),
+          h("div", { class: "proj-meta" }, h("span", { class: "mono" }, ago(p.createdAt))));
+      }));
+
+  return F(
+    h("div", { class: "stat-row" },
+      Stat(projects.length, "注册项目", "配置工作目录与权限"),
+      Stat(favN, "收藏", "快速访问"),
+      Stat(editN, "自动编辑", "acceptEdits 模式"),
+      Stat(bypassN, "完全自主", "bypassPermissions 模式", bypassN > 0 ? "error" : undefined)),
+    addForm, projectCards);
 }
 
 const INBOX_STATUS = { pending: ["待终端取走", "pill-look", "Clock"], done: ["已执行 · 已归档", "pill-pass", "Check"] };

@@ -446,6 +446,23 @@ kbd { font-family:var(--font-mono); font-size:11px; background:var(--surface-sun
   .danger-intro { flex-direction:column; }
   .danger-mcp { border-left:none; padding-left:0; border-top:1px solid var(--border-subtle); padding-top:16px; }
 }
+
+/* ── Projects page ── */
+.proj-form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.proj-form .inp { min-width:120px; }
+.proj-list { display:flex; flex-direction:column; gap:12px; }
+.proj-card { transition:box-shadow .15s; }
+.proj-card:hover { box-shadow:var(--shadow-hover); }
+.proj-editing { border:1.5px solid var(--accent); }
+.proj-top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+.proj-title-row { display:flex; align-items:center; gap:8px; min-width:0; }
+.proj-name { font-weight:600; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.proj-actions { display:flex; gap:4px; flex-shrink:0; }
+.proj-star { background:none; border:none; cursor:pointer; font-size:18px; color:var(--fg-muted); padding:0 2px; line-height:1; }
+.proj-star.on { color:var(--warning); }
+.proj-cwd { margin-top:6px; font-size:13px; color:var(--fg-muted); word-break:break-all; }
+.proj-desc { margin-top:4px; font-size:13px; color:var(--fg-subtle); }
+.proj-meta { margin-top:6px; font-size:12px; color:var(--fg-subtle); }
 </style>
 </head>
 <body>

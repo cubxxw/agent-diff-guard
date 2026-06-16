@@ -18,7 +18,8 @@ import { existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { logDir } from "./logger";
 import { listPending, markDone, type InboxItem } from "./inbox";
 import { classify, detectKind, type Kind } from "./classify";
-import { runShell, runClaude as realRunClaude, type ExecResult } from "./executor";
+import { runShell, runClaude as realRunClaude, type ExecResult, type ExecOpts, type ClaudeOpts } from "./executor";
+import { getProject } from "./projects";
 import { writeRun, markBlocked, isFirstSeen, rememberCommand } from "./runlog";
 
 export type Outcome = "executed" | "blocked" | "paused" | "failed";
@@ -33,8 +34,8 @@ export interface ProcessResult {
 
 /** 依赖注入口:测试可替换执行器,避免真的 spawn claude/bash。 */
 export interface Deps {
-  runShell?: (action: string) => Promise<ExecResult>;
-  runClaude?: (prompt: string) => Promise<ExecResult>;
+  runShell?: (action: string, opts?: ExecOpts) => Promise<ExecResult>;
+  runClaude?: (prompt: string, opts?: ExecOpts & ClaudeOpts) => Promise<ExecResult>;
   /** 注入时间,保持项目「可复现」惯例 */
   nowMs?: () => number;
 }
@@ -69,16 +70,24 @@ export async function processOne(item: InboxItem, deps: Deps = {}): Promise<Proc
   }
   rememberCommand(item.action);
 
+  // 2b. 解析项目 → cwd + permissionMode(无 projectId 或找不到则回退到当前行为)
+  const project = item.projectId ? getProject(item.projectId) : undefined;
+  const execOpts: ExecOpts & ClaudeOpts = {};
+  if (project) {
+    execOpts.cwd = project.cwd;
+    execOpts.permissionMode = project.permissionMode;
+  }
+
   // 3. 按 kind 路由执行
   const kind: Kind = detectKind(item.action, item.kind);
   let res: ExecResult;
   try {
     if (kind === "agent") {
-      const run = deps.runClaude ?? ((p: string) => realRunClaude(p));
-      res = await run(item.action);
+      const run = deps.runClaude ?? ((p: string, o?: ExecOpts & ClaudeOpts) => realRunClaude(p, o));
+      res = await run(item.action, execOpts);
     } else {
-      const run = deps.runShell ?? ((a: string) => runShell(a));
-      res = await run(item.action);
+      const run = deps.runShell ?? ((a: string, o?: ExecOpts) => runShell(a, o));
+      res = await run(item.action, execOpts);
     }
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);

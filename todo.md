@@ -249,7 +249,7 @@
   依赖:import from `./types` only。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/loop/report.test.ts 2>&1 | tail -1 | grep -q ' 0 fail' && echo PASS || echo FAIL`
 
-- [ ] **L09 `src/loop-cli.ts` — CLI 子命令**
+- [x] **L09 `src/loop-cli.ts` — CLI 子命令**
   目的:`agent-diff-guard loop start/check/status/report/stop/list/install-hook` 全部子命令。
   读:`src/cli.ts` — 现有参数解析风格(rawArgs 手动解析)和 render 风格(C.bold/C.dim)。`src/loop/session.ts`、`src/loop/check.ts`、`src/loop/report.ts`。
   建:`src/loop-cli.ts` (~250 行)。内容:

@@ -283,7 +283,7 @@
 
 ## Phase 4 — Glue (接线)
 
-- [ ] **L12 `src/cli.ts` 加 loop 子命令路由**
+- [x] **L12 `src/cli.ts` 加 loop 子命令路由**
   目的:让 `agent-diff-guard loop ...` 到达 loop-cli.ts。
   读:`src/cli.ts:232-235` — run block `return;` 之后、unknown command check 之前。
   改:在 line 232 `return;`(run block 结尾)之后、line 234 unknown check 之前,插入:

@@ -33,6 +33,7 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
                                      全自动 + 黑名单保险丝(破坏性命令拦成待批)
                                      [--once] 单轮 [--dry-run] 只分级不执行
                                      [--poll N] 轮询毫秒 [--status] 看概况
+  agent-diff-guard loop [子命令]     Loop 验证层:start/check/status/report/stop/list
 
 选项:
   --range <git-range>   要检查的范围 (默认: HEAD,即已暂存+未暂存的当前改动)
@@ -231,7 +232,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 给了一个不认识的子命令(既不是 check/serve/context/inbox/run 也不是 flag)→ 用法错误
+  if (cmd === "loop") {
+    const { handleLoopCommand } = await import("./loop-cli");
+    await handleLoopCommand(rawArgs.slice(1));
+    return;
+  }
+
+  // 给了一个不认识的子命令(既不是 check/serve/context/inbox/run/loop 也不是 flag)→ 用法错误
   if (cmd && !cmd.startsWith("-") && cmd !== "check") {
     console.error(`未知命令: ${cmd}\n`);
     console.error(HELP);

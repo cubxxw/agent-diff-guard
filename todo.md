@@ -369,7 +369,7 @@
   保留原有 `iterationDriftScore()` 作为 fallback，新分数加权合并。
   补单测：验证语义相关 diff 分低、无关 diff 分高。
 
-- [ ] **LE-06 Gas Town 集成 — Witness 角色适配器**
+- [x] **LE-06 Gas Town 集成 — Witness 角色适配器**
   目的：Gas Town 跑 20-30 个并行 Claude Code 实例，缺乏内建的漂移检测和预算护栏（3-0 验证确认）。
   建：`src/loop/gastown-adapter.ts`（~200L）
   - 读 Gas Town Beads（Git-backed JSON，一行一个 issue）→ 提取 task assignment
@@ -380,7 +380,7 @@
   依赖：Gas Town 需本地安装（开发时 mock Beads JSON）。
   参考：Gas Town 15.9k stars，是 Claude Code 生态最大的多 agent 编排系统。
 
-- [ ] **LE-07 loop-audit guard-readiness 插件**
+- [x] **LE-07 loop-audit guard-readiness 插件**
   目的：cobusgreyling/loop-engineering 的 loop-audit 做 L0-L3 就绪度评分（3-0 验证确认），agent-diff-guard 可贡献 "guard" 评分维度。
   建：`src/loop/loop-audit-plugin.ts`（~100L）→ 导出 JSON 格式的 guard-readiness score：
   - 是否有漂移检测 → +1
@@ -407,7 +407,7 @@
 
 ### 长期（3-6 月）：生态卡位
 
-- [ ] **LE-10 Loop Contract 标准化（.loop-contract.yaml）**
+- [x] **LE-10 Loop Contract 标准化（.loop-contract.yaml）**
   目的：定义生产 loop 的 6 个必填字段标准（TRIGGER / SCOPE / ACTION / BUDGET / STOP / ESCALATE）。
   建：`src/loop/contract.ts`（~150L）— 解析 `.loop-contract.yaml` → 验证字段完整性 → 与 loop session 配置对齐。
   CLI 子命令：`agent-diff-guard loop contract validate`
@@ -438,7 +438,7 @@
   保持 <200ms 延迟。
   可配置开关（默认关闭，需显式 opt-in）。
 
-- [ ] **LE-14 AgentGuard47 互操作层**
+- [x] **LE-14 AgentGuard47 互操作层**
   目的：AgentGuard47 是 Python 生态的运行时护栏（预算硬上限 / loop 检测 / 重试限制），与 agent-diff-guard（TypeScript/diff 分析/漂移检测）互补。
   建：`src/loop/agentguard-bridge.ts`（~100L）
   - 读 AgentGuard47 的 JSONL trace 文件 → 提取 budget events → 喂给 budget.ts

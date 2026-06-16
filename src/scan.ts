@@ -58,7 +58,7 @@ export function parseDiff(range: string, cwd: string): FileChange[] {
  * 导致中文任务描述下偏离检测彻底失效(kws 为空 → 直接放过)。
  * 拉丁词要求 ≥4 字(滤掉 the/fix);CJK 段要求 ≥2 字(一个汉字太短易误命中,两字起更像实词)。
  */
-function taskKeywords(task: string): string[] {
+export function taskKeywords(task: string): string[] {
   const latin = task
     .toLowerCase()
     .split(/[^a-z0-9_]+/)

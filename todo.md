@@ -214,7 +214,7 @@
   测试覆盖:用 `$ADG_HOME` 环境变量指向 tmpdir。startSession 创建文件、loadSession 读回一致、stopSession 改 status、activeSessionForCwd 找到/找不到、同 cwd 不能两个 active(抛错)。
   验证: `cd /Users/xiongxinwei/data/mine/cubxxw/personal/agent-diff-guard && bun test src/loop/session.test.ts 2>&1 | tail -1 | grep -q ' 0 fail' && echo PASS || echo FAIL`
 
-- [ ] **L06 `src/loop/check.ts` — 每轮迭代检查编排器**
+- [x] **L06 `src/loop/check.ts` — 每轮迭代检查编排器**
   目的:Loop Guard 的核心,编排所有子系统产出 IterationResult。
   读:`src/loop/types.ts` — IterationResult schema。`src/loop/session.ts` — loadSession/saveSession。`src/loop/drift.ts` — iterationDriftScore/updateCumulativeDrift。`src/loop/budget.ts` — budgetStatus。`src/scan.ts` — parseDiff。`src/rules.ts` — runRules。`src/violations.ts` — detectViolations。`src/policy.ts` — loadPolicy。`src/event.ts` — buildFindingMeta。
   建:`src/loop/check.ts` (~250 行) + `src/loop/check.test.ts`。内容:

@@ -15,7 +15,7 @@ import { readEvents } from "./logger";
 import { ruleRank, timeline, dispositions, overview } from "./stats";
 import { projectUsage, usageOverview, recentSessions } from "./sessions";
 import { cachedAllSessions } from "./sessions-cache";
-import { dailyStats, dayStat } from "./daily";
+import { dailyStats, dayStat, todayLocal } from "./daily";
 import { cachedAllRecords } from "./daily-cache";
 import { isAIEnabled, buildAnalysisInput, analyzeEvents, analyzeInsights, answerAskGuard, deepCodeAllowed, NETWORK_DISCLOSURE, type AskGuardContext } from "./ai";
 import { allTranscripts } from "./transcript";
@@ -472,7 +472,7 @@ async function handle(req: Request): Promise<Response> {
     const records = cachedRecords();
     if (path === "/api/daily/list") return jsonResponse(dailyStats(records));
     if (path === "/api/daily/today") {
-      const today = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+      const today = url.searchParams.get("date") ?? todayLocal();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
         return new Response(JSON.stringify({ ok: false, reason: "date must be YYYY-MM-DD" }), { status: 400, headers: JSON_HEADERS });
       }

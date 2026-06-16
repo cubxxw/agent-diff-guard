@@ -88,6 +88,24 @@ const fmtDur = (ms) => { const hh = Math.floor(ms / 3600000), mm = Math.floor((m
 const fmtTime = (iso) => { if (!iso) return "—"; const d = new Date(iso); if (isNaN(d)) return iso; return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/\//g, "-"); };
 const ago = (iso) => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; if (s < 60) return "刚刚"; if (s < 3600) return Math.floor(s / 60) + " 分钟前"; if (s < 86400) return Math.floor(s / 3600) + " 小时前"; return Math.floor(s / 86400) + " 天前"; };
 const truncate = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
+// 本地日期 YYYY-MM-DD —— 绝不用 toISOString(那是 UTC,北京时区凌晨前差一天,会和后端按本地日聚合的口径打架)
+const localDateStr = (d = new Date()) => {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+// 浏览器实际时区偏移,渲染成 UTC±N(分享卡片用,避免跨时区歧义)
+const tzLabel = () => { const off = -new Date().getTimezoneOffset() / 60; return "UTC" + (off >= 0 ? "+" : "") + off; };
+// "2026-06-17 周三 · UTC+8 · 14:30 生成" —— 分享卡片时间锚点(日期+时区,本地实时)
+const shareStamp = (dateStr) => {
+  const now = new Date();
+  const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][now.getDay()];
+  const hh = String(now.getHours()).padStart(2, "0"), mm = String(now.getMinutes()).padStart(2, "0");
+  const datePart = dateStr || localDateStr(now);
+  // 历史某天:dateStr 与今天不同 → 只给日期(那天没有"生成时刻"概念);今天 → 带星期+时区+生成时刻
+  return datePart === localDateStr(now)
+    ? `${datePart} ${wk} · ${tzLabel()} · ${hh}:${mm} 生成`
+    : `${datePart} · ${tzLabel()}`;
+};
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -713,63 +731,144 @@ function DangerDetail(z) {
    分享:把某天用量做成晶点卡,复制为图片(原生 SVG foreignObject,零依赖)
    ============================================================ */
 
-// 晶点卡 HTML(所有样式必须内联 —— foreignObject 截图不继承外部样式表)。
-// 配色直接写死琥珀棕设计 token 的十六进制,与面板一致。
-function usageCardHTML(day, isToday) {
-  const C = { bg: "#FAF8F6", surface: "#FFFFFF", fg: "#2B2822", muted: "#6B6560", subtle: "#857F79",
-    accent: "#5D3000", accentSoft: "#F5EDE3", border: "#EDE8DF", warn: "#8A5800", succ: "#4C7A3F" }; /* P1-6:对比度达标 */
+// HTML 实体转义 —— 插入 foreignObject 的字符串字段必须转义,否则破坏 XML 解析触发 onerror。
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// 内联 sparkline(纯矢量,跨平台逐像素一致;处理空/单点/全等值边界,绝不报错)。
+// 在 data URL SVG foreignObject → canvas 管线下安全:无 emoji、无外链、显式 xmlns/viewBox。
+function sparkline(points, width, height, color) {
+  const W = Math.max(1, width | 0), H = Math.max(1, height | 0), pad = 3, innerH = Math.max(1, H - pad * 2);
+  const data = (Array.isArray(points) ? points : []).map(Number).filter(Number.isFinite);
+  const open = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+  if (data.length < 2) {
+    const y = (H / 2).toFixed(2);
+    const dot = data.length === 1 ? `<circle cx="${(W / 2).toFixed(2)}" cy="${y}" r="2" fill="${color}"/>` : "";
+    return open + `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${color}" stroke-width="1.5" stroke-opacity="0.35" stroke-linecap="round"/>` + dot + `</svg>`;
+  }
+  const min = Math.min(...data), max = Math.max(...data), range = max - min, n = data.length, stepX = W / (n - 1);
+  const x = (i) => (i * stepX).toFixed(2);
+  const y = (v) => range === 0 ? (H / 2).toFixed(2) : (pad + (1 - (v - min) / range) * innerH).toFixed(2);
+  const pts = data.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  return open
+    + `<polyline points="0,${H} ${pts} ${W},${H}" fill="${color}" fill-opacity="0.12" stroke="none"/>`
+    + `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${x(n - 1)}" cy="${y(data[n - 1])}" r="2.5" fill="${color}"/></svg>`;
+}
+
+// 社交炫耀·数据海报(560×680)。所有样式内联、零 emoji(全 SVG path 图标)、字体静默 fallback。
+// 大背景渐变在 renderCardBlob 的外层 SVG 铺底,这里根 div 透明。
+// trend = 近 14 天 token 数值数组;nowText = 已格式化的"日期+时区+生成时刻"锚点(本地实时)。
+function usageCardHTML(day, isToday, trend, nowText) {
+  const W = 560, H = 680;
+  const C = { fg: "#2B2822", muted: "#6B6560", subtle: "#857F79", accent: "#5D3000",
+    accentSoft: "#F5EDE3", warn: "#8A5800", succ: "#4C7A3F", surface: "#FFFFFF", heroInk: "#FBEFE0", heroDim: "#D9B98E" };
   const mono = "'SF Mono','JetBrains Mono',ui-monospace,Menlo,monospace";
   const disp = "'Space Grotesk',system-ui,-apple-system,sans-serif";
-  const fmtKLocal = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(Math.round(n)));
-  const dur = (ms) => { const hh = Math.floor(ms / 3600000), mm = Math.floor((ms % 3600000) / 60000); return hh > 0 ? `${hh}h${mm}m` : `${mm}m`; };
-  const cachePct = day.tokens.total ? Math.round((day.tokens.cacheRead / day.tokens.total) * 100) : 0;
-  const dateText = isToday ? "今日" : day.date;
-  const sub = (val, label) => `
-    <div style="flex:1;min-width:0;background:${C.bg};border:1px solid ${C.border};border-radius:12px;padding:14px 16px;">
-      <div style="font-family:${mono};font-size:22px;font-weight:500;color:${C.fg};letter-spacing:-.5px;line-height:1;">${val}</div>
-      <div style="font-size:12px;color:${C.muted};margin-top:7px;">${label}</div>
-    </div>`;
+  const t = day.tokens || {};
+  const totalTok = Number(t.total) || 0, outTok = Number(t.output) || 0, cacheRead = Number(t.cacheRead) || 0;
+  const fmtTok = (n) => { n = Number(n) || 0; return n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(Math.round(n)); };
+  const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(1);
+  const dur = (ms) => { const m = Math.round((Number(ms) || 0) / 60000); if (m >= 60) { const h = Math.floor(m / 60), mm = m % 60; return mm ? `${h}h ${mm}m` : `${h}h`; } return `${m}m`; };
+
+  // 金句:≈ 写完 N 本《三体》(output token → 汉字 ×0.75 ÷ 单册 88 万字),不足一本降级到"万字"
+  const chars = outTok * 0.75, books = chars / 880000;
+  const heroLine = books >= 1 ? `≈ 写完 ${Math.ceil(books)} 本《三体》的字数` : `≈ 写完 ${Math.max(1, Math.round(chars / 10000))} 万字的体量`;
+  // cache 命中率:cacheRead 占总 token 的比例(直观、可信,不会出现"省下的比花的多"的荒谬值)
+  const cachePct = totalTok ? Math.round(cacheRead / totalTok * 100) : 0;
+  const cacheTxt = cachePct + "%";
+
+  // 内联 SVG path 图标(替代 emoji,跨平台一致)
+  const icon = (path, color, size) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  const P = {
+    spark: '<path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.6 5.7 21l2.3-7.2-6-4.4h7.6z"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    tool: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.3 2.3-2-2 2.3-2.3z"/>',
+    cache: '<path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z"/><path d="M3 6v12c0 1.7 4 3 9 3s9-1.3 9-3V6"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/>',
+  };
+
+  const spark = sparkline(Array.isArray(trend) ? trend : [], 496, 56, C.heroDim);
+
+  const stats = [
+    { ic: P.clock, label: "活跃时长", val: dur(day.activeMs), tone: C.fg },
+    { ic: P.tool, label: "工具调用", val: (Number(day.toolCalls) || 0).toLocaleString("en-US"), tone: C.fg },
+    { ic: P.cache, label: "cache 命中", val: cacheTxt, tone: C.succ },
+    { ic: P.folder, label: "活跃项目", val: (Number(day.projects) || 0).toLocaleString("en-US"), tone: C.fg },
+  ];
+  const statCards = stats.map((s) =>
+    `<div style="flex:1;min-width:0;background:${C.surface};border:1px solid #ECE3D7;border-radius:14px;padding:12px 11px 13px;box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 2px 6px rgba(93,48,0,.05);">`
+    + `<div style="display:flex;align-items:center;gap:5px;margin-bottom:7px;">${icon(s.ic, s.tone === C.succ ? C.succ : C.accent, 14)}`
+    + `<span style="font:600 10px/1 ${disp};color:${C.subtle};letter-spacing:.02em;white-space:nowrap;">${esc(s.label)}</span></div>`
+    + `<div style="font:700 19px/1 ${mono};color:${s.tone};letter-spacing:-.02em;">${esc(s.val)}</div></div>`
+  ).join("");
+
+  const dateText = isToday ? esc(nowText) : `${esc(day.date)} · 当日快照`;
+
   return `
-  <div xmlns="http://www.w3.org/1999/xhtml" style="width:560px;box-sizing:border-box;background:${C.surface};border:1px solid ${C.border};border-radius:22px;padding:34px 36px;font-family:${disp};color:${C.fg};">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:26px;">
-      <div style="display:flex;align-items:center;gap:11px;">
-        <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,${C.accent},#7A3F00);display:flex;align-items:center;justify-content:center;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+  <div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:transparent;box-sizing:border-box;font-family:${disp};color:${C.fg};position:relative;">
+
+    <div style="position:relative;margin:18px 18px 0;height:312px;border-radius:22px;overflow:hidden;padding:22px 24px 0;box-sizing:border-box;box-shadow:0 10px 30px rgba(93,48,0,.22);">
+      <div style="position:absolute;left:0;top:0;right:0;bottom:0;background:linear-gradient(135deg,#5D3000 0%,#7A3F00 58%,#8A5800 100%);"></div>
+      <div style="position:absolute;top:-60px;right:-40px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(255,200,130,.22),rgba(255,200,130,0) 70%);"></div>
+      <div style="position:relative;">
+        <div style="display:flex;align-items:center;gap:7px;">
+          ${icon(P.spark, "#F2B670", 16)}
+          <span style="font:700 13px/1 ${disp};color:${C.heroInk};letter-spacing:.01em;">agent-diff-guard · 我的 AI 算力日报</span>
         </div>
-        <div>
-          <div style="font-weight:700;font-size:13px;letter-spacing:1px;">AGENT-DIFF-GUARD</div>
-          <div style="font-family:${mono};font-size:10px;color:${C.subtle};letter-spacing:.5px;margin-top:2px;">本机只读 · 不联网</div>
+        <div style="margin-top:9px;display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,235,210,.25);border-radius:999px;padding:5px 12px;font:600 12px/1 ${mono};color:${C.heroInk};letter-spacing:.02em;">${dateText}</div>
+        <div style="margin-top:26px;font:500 15px/1.2 ${disp};color:${C.heroDim};letter-spacing:.04em;">${isToday ? "今天,我让 AI 吞下了" : "这一天,AI 吞下了"}</div>
+        <div style="margin-top:4px;display:flex;align-items:baseline;gap:10px;">
+          <span style="font:700 72px/0.92 ${mono};color:#FFF7EC;letter-spacing:-.03em;">${esc(fmtTok(totalTok))}</span>
+          <span style="font:600 18px/1 ${disp};color:${C.heroDim};padding-bottom:6px;">tokens</span>
+        </div>
+        <div style="margin-top:14px;display:flex;align-items:baseline;gap:8px;">
+          <span style="font:600 13px/1 ${disp};color:${C.heroDim};letter-spacing:.05em;">估算成本</span>
+          <span style="font:700 30px/1 ${mono};color:#F2B670;letter-spacing:-.02em;">${esc(fmtUsd(day.estCostUsd))}</span>
         </div>
       </div>
-      <div style="font-family:${mono};font-size:13px;color:${C.muted};">${dateText}</div>
     </div>
 
-    <div style="background:${C.accentSoft};border-radius:16px;padding:22px 24px;margin-bottom:16px;">
-      <div style="font-size:12px;color:${C.accent};letter-spacing:1px;font-weight:700;text-transform:uppercase;">${isToday ? "今日" : "当日"} TOKEN</div>
-      <div style="font-family:${mono};font-size:52px;font-weight:500;color:${C.accent};letter-spacing:-1.5px;line-height:1.05;margin-top:4px;">${fmtKLocal(day.tokens.total)}</div>
-      <div style="font-size:13px;color:${C.muted};margin-top:4px;">cache 命中 ${cachePct}% · 输出 ${fmtKLocal(day.tokens.output)} · ${day.projects} 个项目</div>
+    <div style="margin:16px 18px 0;background:${C.accentSoft};border:1px solid #EBDCC8;border-radius:14px;padding:11px 16px;display:flex;align-items:center;gap:9px;">
+      ${icon(P.trend, C.warn, 16)}
+      <span style="font:600 15px/1.2 ${disp};color:${C.accent};letter-spacing:.01em;">${esc(heroLine)}</span>
     </div>
 
-    <div style="display:flex;gap:12px;margin-bottom:24px;">
-      ${sub(dur(day.activeMs), "活跃时长")}
-      ${sub(day.toolCalls.toLocaleString(), "工具调用")}
-      ${sub("$" + day.estCostUsd.toFixed(1), "估算成本")}
+    <div style="margin:14px 18px 0;display:flex;gap:9px;">${statCards}</div>
+
+    <div style="margin:16px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font:600 10px/1 ${disp};color:${C.subtle};letter-spacing:.08em;text-transform:uppercase;">14-day trend</span>
+        <span style="font:600 10px/1 ${mono};color:${C.subtle};">${esc(fmtTok(totalTok))} today</span>
+      </div>
+      <div style="height:56px;">${spark}</div>
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid ${C.border};padding-top:16px;">
-      <div style="font-size:12.5px;color:${C.muted};">一个人 × N 个 agent,烧了多少 —— 一眼看完</div>
-      <div style="font-family:${mono};font-size:11px;color:${C.subtle};">${day.messages.total} 条消息</div>
+    <div style="position:absolute;left:18px;right:18px;bottom:18px;">
+      <div style="font:700 17px/1.2 ${disp};color:${C.fg};letter-spacing:.01em;">不是我卷,是我的 agent 们卷。</div>
+      <div style="margin-top:6px;font:600 12px/1 ${mono};color:${C.warn};letter-spacing:.02em;">#AI算力日报  #agentdiffguard</div>
     </div>
   </div>`;
 }
 
-// 把晶点卡 HTML 经 SVG foreignObject 渲染成 PNG Blob(2x 高清)。
-function renderCardBlob(day, isToday) {
+// 把海报 HTML 经 SVG foreignObject 渲染成 PNG Blob(2x 高清)。
+// 大背景渐变用 SVG <linearGradient>+<rect> 铺在 foreignObject 之下(比 CSS gradient 在此管线下更可靠),卡片根 div 透明。
+function renderCardBlob(day, isToday, trend, nowText) {
   return new Promise((resolve, reject) => {
-    const W = 560, H = 340, SCALE = 2;
-    const inner = usageCardHTML(day, isToday);
+    const W = 560, H = 680, SCALE = 2;
+    const inner = usageCardHTML(day, isToday, trend, nowText);
     const svgStr =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+      `<defs>` +
+        `<linearGradient id="adgBg" x1="0" y1="0" x2="0" y2="1">` +
+          `<stop offset="0" stop-color="#FAF8F6"/><stop offset="0.55" stop-color="#FBF4EA"/><stop offset="1" stop-color="#F3E7D6"/>` +
+        `</linearGradient>` +
+        `<radialGradient id="adgGlow" cx="0.5" cy="0" r="0.9">` +
+          `<stop offset="0" stop-color="#FFFFFF" stop-opacity="0.7"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>` +
+        `</radialGradient>` +
+      `</defs>` +
+      `<rect x="0" y="0" width="${W}" height="${H}" rx="28" fill="url(#adgBg)"/>` +
+      `<rect x="0" y="0" width="${W}" height="220" rx="28" fill="url(#adgGlow)"/>` +
       `<foreignObject x="0" y="0" width="${W}" height="${H}">${inner}</foreignObject></svg>`;
     const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgStr);
     const img = new Image();
@@ -787,11 +886,11 @@ function renderCardBlob(day, isToday) {
 }
 
 // 入口:生成卡片 → 优先写剪贴板,失败则下载 PNG。按钮给即时反馈。
-async function shareUsageCard(day, isToday, btn) {
+async function shareUsageCard(day, isToday, trend, nowText, btn) {
   const label = btn ? btn.querySelector("span:last-child") || btn : null;
   const restore = btn ? btn.textContent : "";
   try {
-    const blob = await renderCardBlob(day, isToday);
+    const blob = await renderCardBlob(day, isToday, trend, nowText);
     // 优先:复制到剪贴板(可直接粘进聊天/文档)
     if (navigator.clipboard && window.ClipboardItem) {
       try {
@@ -803,7 +902,7 @@ async function shareUsageCard(day, isToday, btn) {
     // 降级:触发下载
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `adg-usage-${isToday ? new Date().toISOString().slice(0, 10) : day.date}.png`;
+    a.download = `adg-usage-${isToday ? localDateStr() : day.date}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast("剪贴板不可用,已下载图片", "ArrowRight");
@@ -821,6 +920,10 @@ function UsageView({ today, daily, projects, sessions, ov }) {
   const dayLabel = isToday ? "今日" : day.date.slice(5); // MM-DD
   const cachePct = day.tokens.total ? ((day.tokens.cacheRead / day.tokens.total) * 100).toFixed(0) : 0;
   const dailyRows = daily.slice(0, 14).map((d) => ({ label: d.date, v: d.tokens.total }));
+  // sparkline 趋势:近 14 天 token,倒序的 daily 还原成时间正序(旧→新)
+  const trend = daily.slice(0, 14).map((d) => d.tokens.total).reverse();
+  // 分享卡时间锚点:今天用"日期 周几 · 时区 · 生成时刻",历史某天用那天的日期+时区
+  const nowText = shareStamp(isToday ? null : day.date);
   const maxCost = Math.max(1, ...projects.map((p) => p.estCostUsd));
   const pick = (date) => { usageState.selDate = date; PAGES.usage(); };
   return F(
@@ -830,14 +933,14 @@ function UsageView({ today, daily, projects, sessions, ov }) {
         !isToday && h("span", { class: "sec-hint" }, "历史某天 · 数据快照")),
       h("div", { class: "sec-right" },
         !isToday && h("button", { class: "btn btn-quiet btn-sm", onClick: () => pick(null) }, Icon("CornerUpLeft", 13), "回到今天"),
-        h("button", { class: "btn btn-ghost btn-sm", onClick: (e) => shareUsageCard(day, isToday, e.currentTarget) }, Icon("Copy", 13), "分享当天为图片"))),
+        h("button", { class: "btn btn-ghost btn-sm", onClick: (e) => shareUsageCard(day, isToday, trend, nowText, e.currentTarget) }, Icon("Copy", 13), "分享当天为图片"))),
     h("div", { class: "stat-row" },
       Stat(fmtDur(day.activeMs), dayLabel + "活跃时长", `会话跨度 ${fmtDur(day.sessionSpanMs)}`),
       Stat(fmtK(day.tokens.total), dayLabel + " token", `cache ${cachePct}% · out ${fmtK(day.tokens.output)}`),
       Stat(day.toolCalls.toLocaleString(), "工具调用", `${day.messages.total} 条消息 · ${day.projects} 个项目`),
       Stat("$" + day.estCostUsd.toFixed(1), dayLabel + "估算成本", "按模型单价估算,非账单", "warning")),
     isToday && h("p", { class: "foot-note", style: { textAlign: "left", margin: "-8px 0 0" } },
-      F("「今日」按自然日(本地 ", h("span", { class: "mono" }, new Date().toISOString().slice(0, 10)), ")切片所有 session 的当天部分;下方「最近 session」按整段会话统计,跨天会话会算进多天 —— 两者口径不同,数字不必相等。")),
+      F("「今日」按自然日(本地 ", h("span", { class: "mono" }, localDateStr()), ")切片所有 session 的当天部分;下方「最近 session」按整段会话统计,跨天会话会算进多天 —— 两者口径不同,数字不必相等。")),
     Card({}, SectionTitle("每日 token · 14 天", isToday ? "点任意一根柱子,看那天的明细。" : `已选 ${day.date} —— 高亮的那根。点今天的柱子或「回到今天」复位。`),
       dailyRows.length ? DailyBars(dailyRows, usageState.selDate, pick) : Empty("还没有每日数据", "Activity")),
     h("div", { class: "two-col" },

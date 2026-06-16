@@ -79,6 +79,16 @@
 
 ---
 
+## Loop 生态集成方向（2026-06 研究）
+
+> 详见 [LOOP-ECOSYSTEM-RESEARCH.md](./LOOP-ECOSYSTEM-RESEARCH.md) · 具体任务见 todo.md 🔵 Loop Ecosystem（LE-01 ~ LE-18）
+
+基于深度研究（21 来源 / 105 claims / 对抗验证），确认 agent-diff-guard 占据**经验证的结构性空位**——Loop 时代的验证层。Gas Town（15.9k stars）需要 Witness、Ralph 需要 between-iteration gate、Datadog 需要 guard verdict 数据、loop-audit 需要 guard-readiness 维度。
+
+三个阶段 18 个方向：近期（OTEL export / hash chaining / Loop Monitor）→ 中期（语义漂移 / Gas Town adapter / Ralph gate）→ 长期（Loop Contract 标准 / EU AI Act compliance / 跨 agent 中立性）。
+
+---
+
 ## 始终不做的事(反路线图)
 
 守门人的克制也体现在**拒绝做什么**上:

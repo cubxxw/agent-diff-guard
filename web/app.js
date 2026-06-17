@@ -249,6 +249,7 @@ const NAV = [
     { id: "projects", label: "项目", en: "PROJECTS", icon: "HardDrive" },
     { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" },
     { id: "runlog", label: "执行记录", en: "EXEC LOG", icon: "Terminal" },
+    { id: "loops", label: "Loop 监控", en: "LOOP MONITOR", icon: "Repeat" },
   ]},
 ];
 const PAGE_TITLE = {
@@ -262,6 +263,7 @@ const PAGE_TITLE = {
   projects: ["项目", "注册项目:给每个仓库配工作目录与权限级别,daemon 自动路由"],
   inbox: ["终端信箱", "面板裁决 → 指令 → 终端 agent 取走执行"],
   runlog: ["执行记录", "daemon 每一次执行与拦截的完整留痕"],
+  loops: ["Loop 监控", "跨所有 loop session 的全局风险视图 —— 漂移、预算、最近裁决一眼看完"],
 };
 
 const state = {
@@ -460,6 +462,7 @@ const PAGES = {
   projects: () => loadPage(() => api("/api/projects"), (projects) => ProjectsView(projects)),
   inbox: () => loadPage(() => api("/api/inbox/list"), (items) => InboxView(items)),
   runlog: () => loadPage(() => api("/api/runlog"), (data) => RunlogView(data)),
+  loops: () => loadPage(() => api("/api/loops"), (sessions) => LoopMonitorView(sessions)),
 };
 
 /* ============================================================
@@ -1235,6 +1238,78 @@ function RunlogDetail(it) {
       it.timedOut && h("span", { class: "detail-k" }, "超时"), it.timedOut && h("span", { class: "detail-v t-del" }, "是 — 执行被终止")),
     it.stdout && F(h("div", { class: "run-output-label" }, "STDOUT"), h("pre", { class: "run-output" }, it.stdout)),
     it.stderr && F(h("div", { class: "run-output-label" }, "STDERR"), h("pre", { class: "run-output run-output-err" }, it.stderr)));
+}
+
+// ── 8c. Loop 监控(LE-03)+ 就绪度 widget(LE-18)──
+const LOOP_STATUS_PILL = {
+  active: ["运行中", "pill-pass"],
+  paused: ["已暂停", "pill-look"],
+  stopped: ["已停止", ""],
+  "emergency-braked": ["紧急制动", "pill-wake"],
+};
+const LOOP_VERDICT_PILL = {
+  pass: ["pass", "pill-pass"],
+  warn: ["warn", "pill-look"],
+  block: ["block", "pill-wake"],
+};
+
+// LE-18: 从 session 列表推算 Loop 就绪度等级 L0-L3
+function loopReadiness(sessions) {
+  if (!sessions.length) return { level: "L0", label: "无 loop 配置", tone: "", pct: 0 };
+  const hasBudget = sessions.some((s) => s.budgetTokens != null);
+  const hasUnattended = sessions.some((s) => s.mode === "unattended");
+  const multi = sessions.length >= 2;
+  if (hasUnattended && multi) return { level: "L3", label: "无人值守 + 多 session 监控", tone: "success", pct: 100 };
+  if (hasBudget) return { level: "L2", label: "已配预算闸", tone: "success", pct: 66 };
+  return { level: "L1", label: "有 active session", tone: "warning", pct: 33 };
+}
+
+function ReadinessWidget(sessions) {
+  const r = loopReadiness(sessions);
+  return Card({ class: "danger-intro" },
+    h("div", null,
+      SectionTitle("Loop 就绪度", "你的仓库离\"装上就敢一直开着\"的自治 loop 还有多远(L0→L3)。"),
+      h("div", { class: "seg", style: { marginTop: "6px" } },
+        ...["L0", "L1", "L2", "L3"].map((lv) =>
+          h("span", { class: "pill " + (lv === r.level ? "pill-pass" : "") , style: { marginRight: "6px" } }, lv))),
+      h("p", { class: "qd-reason", style: { margin: "8px 0 0" } }, r.label)),
+    h("div", { class: "danger-mcp" },
+      h("span", { class: "ds-label" }, "就绪等级"),
+      h("div", { class: "verdict-big mono", style: { fontSize: "40px", color: r.tone === "success" ? "var(--success)" : r.tone === "warning" ? "var(--warning)" : "var(--muted)" } }, r.level)));
+}
+
+function driftColor(d) {
+  return d > 0.7 ? "var(--error)" : d >= 0.4 ? "var(--warning)" : "var(--success)";
+}
+
+function LoopMonitorView(sessions) {
+  const active = sessions.filter((s) => s.status === "active").length;
+  const braked = sessions.filter((s) => s.status === "emergency-braked").length;
+  return F(
+    ReadinessWidget(sessions),
+    h("div", { class: "stat-row" },
+      Stat(sessions.length, "Loop sessions", "全部已知 session"),
+      Stat(active, "运行中", "status=active", active > 0 ? "success" : ""),
+      Stat(braked, "紧急制动", "emergency-braked", braked > 0 ? "error" : "")),
+    Card({}, SectionTitle("Loop session 列表", "每个 session 的漂移、预算余量与最近一次裁决。"),
+      sessions.length === 0
+        ? Empty("还没有 loop session —— 用 agent-diff-guard loop start --goal \"...\" 启动一个。", "Repeat")
+        : h("table", { class: "tbl" },
+            h("thead", null, h("tr", null,
+              h("th", null, "目标"), h("th", null, "状态"), h("th", { class: "num" }, "迭代"),
+              h("th", { class: "num" }, "漂移"), h("th", null, "最近裁决"), h("th", null, "更新"))),
+            h("tbody", null, ...sessions.map((s) => {
+              const [slabel, scls] = LOOP_STATUS_PILL[s.status] || [s.status, ""];
+              const driftPct = Math.round((s.cumulativeDrift || 0) * 100);
+              const [vlabel, vcls] = s.latestVerdict ? (LOOP_VERDICT_PILL[s.latestVerdict] || [s.latestVerdict, ""]) : ["—", ""];
+              return h("tr", null,
+                h("td", null, s.goal || h("span", { class: "t-dim" }, "—")),
+                h("td", null, h("span", { class: "pill " + scls }, slabel)),
+                h("td", { class: "num mono" }, s.iterationCount),
+                h("td", { class: "num mono", style: { color: driftColor(s.cumulativeDrift || 0) } }, driftPct + "%"),
+                h("td", null, h("span", { class: "pill " + vcls }, vlabel)),
+                h("td", { class: "mono" }, fmtTime(s.updatedAt)));
+            })))));
 }
 
 /* ============================================================

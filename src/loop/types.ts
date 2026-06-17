@@ -46,6 +46,12 @@ const RiskTrendEntrySchema = z.object({
   budgetPct: z.number(),
 });
 
+const ToolCallEntrySchema = z.object({
+  tool: z.string(),
+  success: z.boolean(),
+  timestamp: z.string(),
+});
+
 // -- LoopSession --
 
 export const LoopSessionSchema = z.object({
@@ -73,6 +79,11 @@ export const LoopSessionSchema = z.object({
   rollbackPoints: z.array(RollbackEntrySchema).default([]),
   findingsLog: z.array(FindingLogEntrySchema).default([]),
   riskTrend: z.array(RiskTrendEntrySchema).default([]),
+
+  // LE-15: per-iteration diff content hashes, for no-progress detection
+  diffHashHistory: z.array(z.string()).default([]),
+  // LE-16: tool-call outcomes, for the circuit breaker
+  toolCallHistory: z.array(ToolCallEntrySchema).default([]),
 });
 
 export type LoopSession = z.infer<typeof LoopSessionSchema>;
@@ -124,6 +135,37 @@ export const IterationResultSchema = z.object({
       }),
     ),
   }),
+
+  // LE-01: flat OTEL span attributes for observability ingestion
+  otelAttributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+
+  // LE-04: aggregate token spend across all active sessions in the same cwd
+  crossSessionCheck: z
+    .object({
+      totalTokensAcrossSessions: z.number(),
+      activeSessionCount: z.number(),
+      overThreshold: z.boolean(),
+    })
+    .optional(),
+
+  // LE-15: no-progress (stall) detection
+  progressCheck: z
+    .object({
+      stalled: z.boolean(),
+      stalledRounds: z.number(),
+      reason: z.string(),
+    })
+    .optional(),
+
+  // LE-16: tool-call circuit breaker
+  circuitCheck: z
+    .object({
+      tripped: z.boolean(),
+      tool: z.string().nullable(),
+      consecutiveFailures: z.number(),
+      recommendation: z.string(),
+    })
+    .optional(),
 });
 
 export type IterationResult = z.infer<typeof IterationResultSchema>;

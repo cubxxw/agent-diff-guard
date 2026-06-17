@@ -27,6 +27,7 @@ import { listProjects, createProject, updateProject, deleteProject, type Permiss
 import { listRuns, listBlocked } from "./runlog";
 import { buildQueue } from "./findings";
 import { repoHistory, staticZones } from "./context";
+import { listSessions } from "./loop/session";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -478,6 +479,31 @@ async function handle(req: Request): Promise<Response> {
       }
       return jsonResponse(dayStat(today, records));
     }
+  }
+
+  // ── Loop Monitor:跨 loop 全局风险视图(LE-03) ──
+  if (path === "/api/loops") {
+    const snapshots = [];
+    for (const s of listSessions()) {
+      try {
+        const last = s.riskTrend[s.riskTrend.length - 1];
+        snapshots.push({
+          id: s.id,
+          status: s.status,
+          goal: s.goal.slice(0, 80),
+          mode: s.mode,
+          iterationCount: s.iterationCount,
+          cumulativeDrift: s.cumulativeDrift,
+          budgetTokens: s.budgetTokens,
+          updatedAt: s.updatedAt,
+          latestVerdict: last?.verdict ?? null,
+          budgetPct: last?.budgetPct ?? 0,
+        });
+      } catch {
+        // 坏 session 跳过,不拖垮整个视图
+      }
+    }
+    return jsonResponse(snapshots);
   }
 
   // ── 静态面板 ──

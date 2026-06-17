@@ -60,6 +60,8 @@ export async function startSession(opts: {
     rollbackPoints: [],
     findingsLog: [],
     riskTrend: [],
+    diffHashHistory: [],
+    toolCallHistory: [],
   };
 
   const dir = loopsDir();

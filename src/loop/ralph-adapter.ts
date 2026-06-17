@@ -62,8 +62,8 @@ export function parseImplementationPlan(content: string): ParsedPlan {
     if (!match) continue;
 
     priority++;
-    const done = match[1].trim().toLowerCase() === "x";
-    const text = match[2].trim();
+    const done = (match[1] ?? "").trim().toLowerCase() === "x";
+    const text = (match[2] ?? "").trim();
     tasks.push({ text, priority, done });
   }
 

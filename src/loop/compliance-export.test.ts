@@ -141,6 +141,8 @@ function mockSession(overrides?: Partial<LoopSession>): LoopSession {
         budgetPct: 0.17,
       },
     ],
+    diffHashHistory: [],
+    toolCallHistory: [],
     ...overrides,
   };
   return base;

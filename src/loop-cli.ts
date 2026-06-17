@@ -7,6 +7,7 @@ import {
 } from "./loop/session";
 import { checkIteration } from "./loop/check";
 import { generateReport, renderReport, reportToJson } from "./loop/report";
+import { adapterConfig, type SupportedAgent } from "./loop/adapters";
 
 const C = {
   red: (s: string) => `\x1b[31m${s}\x1b[0m`,
@@ -53,6 +54,9 @@ const LOOP_HELP = `agent-diff-guard loop — Loop 验证层
 
   list    [--json]
           列出所有 sessions
+
+  install-hook [--agent claude|cursor|codex|copilot] [--cli <path>]
+          输出指定 agent 的守门集成配置(默认 claude)
 
   --help  显示本帮助
 `;
@@ -187,15 +191,17 @@ export async function handleLoopCommand(args: string[]): Promise<void> {
   }
 
   if (sub === "install-hook") {
-    console.log(C.dim("Hook configuration for Claude Code settings.json:"));
-    console.log(JSON.stringify({
-      hooks: {
-        PostToolUse: [{
-          matcher: { tool_name: "Edit|Write|MultiEdit" },
-          hooks: [{ type: "command", command: "echo $TOOL_INPUT | bun run src/loop/hook.ts" }],
-        }],
-      },
-    }, null, 2));
+    const agentRaw = parseFlag(args, "--agent") ?? "claude";
+    const validAgents: SupportedAgent[] = ["claude", "cursor", "codex", "copilot"];
+    if (!validAgents.includes(agentRaw as SupportedAgent)) {
+      console.error(C.red(`Unknown --agent: ${agentRaw}. Supported: ${validAgents.join(", ")}`));
+      process.exit(2);
+    }
+    const guardCliPath = parseFlag(args, "--cli") ?? "src/loop/hook.ts";
+    const cfg = adapterConfig(agentRaw as SupportedAgent, guardCliPath);
+    console.log(C.dim(cfg.instructions));
+    console.log("");
+    console.log(cfg.configSnippet);
     return;
   }
 

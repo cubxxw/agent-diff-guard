@@ -19,8 +19,8 @@ describe("parseAgentGuardTrace", () => {
 
     const events = parseAgentGuardTrace(content);
     expect(events).toHaveLength(2);
-    expect(events[0].type).toBe("budget_update");
-    expect(events[1].tool).toBe("read_file");
+    expect(events[0]!.type).toBe("budget_update");
+    expect(events[1]!.tool).toBe("read_file");
   });
 
   test("skips blank lines without error", () => {
@@ -47,8 +47,8 @@ describe("parseAgentGuardTrace", () => {
     const events = parseAgentGuardTrace(content);
     // "null" parses as null (not an object with type/timestamp) so it is skipped too
     expect(events).toHaveLength(2);
-    expect(events[0].tokens).toBe(50);
-    expect(events[1].type).toBe("guard_verdict");
+    expect(events[0]!.tokens).toBe(50);
+    expect(events[1]!.type).toBe("guard_verdict");
   });
 
   test("skips lines missing required fields (type or timestamp)", () => {
@@ -60,7 +60,7 @@ describe("parseAgentGuardTrace", () => {
 
     const events = parseAgentGuardTrace(content);
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("tool_call");
+    expect(events[0]!.type).toBe("tool_call");
   });
 
   test("returns empty array for empty content", () => {
@@ -78,7 +78,7 @@ describe("parseAgentGuardTrace", () => {
 
     const events = parseAgentGuardTrace(content);
     expect(events).toHaveLength(1);
-    expect(events[0].future_field).toBe("hello");
+    expect(events[0]!.future_field).toBe("hello");
   });
 });
 
@@ -164,10 +164,10 @@ describe("verdictToAgentGuardEvent", () => {
     const parsed = parseAgentGuardTrace(line);
 
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].type).toBe("guard_verdict");
-    expect(parsed[0].adg_verdict).toBe("block");
-    expect(parsed[0].adg_reason).toBe("test reason");
-    expect(parsed[0].success).toBe(false);
+    expect(parsed[0]!.type).toBe("guard_verdict");
+    expect(parsed[0]!.adg_verdict).toBe("block");
+    expect(parsed[0]!.adg_reason).toBe("test reason");
+    expect(parsed[0]!.success).toBe(false);
   });
 
   test("embeds adg_verdict and adg_reason fields", () => {

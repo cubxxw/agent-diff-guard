@@ -1,5 +1,5 @@
-import type { IterationResult, HookResult } from "./types";
-import { loadSession, saveSession } from "./session";
+import type { IterationResult, HookResult, LoopSession } from "./types";
+import { loadSession, saveSession, listSessions } from "./session";
 import {
   iterationDriftScore,
   updateCumulativeDrift,
@@ -7,6 +7,9 @@ import {
   driftVerdict,
 } from "./drift";
 import { budgetStatus } from "./budget";
+import { iterationResultToOtelAttributes } from "./otel";
+import { detectNoProgress, diffContentHash } from "./progress";
+import { circuitBreakerCheck } from "./circuit";
 import { parseDiff } from "../scan";
 import { runRules, pathFindings } from "../rules";
 import type { FileChange, Finding } from "../rules";
@@ -15,6 +18,14 @@ import { loadPolicy } from "../policy";
 import { buildFindingMeta } from "../event";
 
 const HISTORY_CAP = 500;
+
+/** LE-04: env-configurable daily cross-session token budget (0/unset = unlimited). */
+function dailyTokenBudget(): number | null {
+  const raw = process.env.ADG_DAILY_TOKEN_BUDGET?.trim();
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 function worstVerdict(
   ...verdicts: ("pass" | "warn" | "block")[]
@@ -30,6 +41,7 @@ export interface CheckDeps {
   loadPolicy: (repoDir: string) => ReturnType<typeof loadPolicy>;
   detectViolations: typeof detectViolations;
   buildFindingMeta: typeof buildFindingMeta;
+  listSessions: () => LoopSession[];
 }
 
 const defaultDeps: CheckDeps = {
@@ -38,6 +50,7 @@ const defaultDeps: CheckDeps = {
   loadPolicy,
   detectViolations,
   buildFindingMeta,
+  listSessions,
 };
 
 export async function checkIteration(opts: {
@@ -98,17 +111,54 @@ export async function checkIteration(opts: {
     session.tokenSpend,
   );
 
-  // 5. Composite verdict
+  // 5a. No-progress detection (LE-15)
+  const diffHash = diffContentHash(changedPaths);
+  session.diffHashHistory.push(diffHash);
+  if (session.diffHashHistory.length > HISTORY_CAP) {
+    session.diffHashHistory = session.diffHashHistory.slice(-HISTORY_CAP);
+  }
+  const progress = detectNoProgress({ recentDiffHashes: session.diffHashHistory });
+  const progressVerdict: "pass" | "warn" | "block" = progress.stalled
+    ? changes.length === 0
+      ? "block"
+      : "warn"
+    : "pass";
+
+  // 5b. Circuit breaker (LE-16) — reads the session's recorded tool-call outcomes
+  const circuit = circuitBreakerCheck(session.toolCallHistory);
+  const circuitVerdict: "pass" | "warn" | "block" = circuit.tripped ? "warn" : "pass";
+
+  // 5c. Cross-session token spend (LE-04)
+  const dailyBudget = dailyTokenBudget();
+  const activeSiblings = deps
+    .listSessions()
+    .filter((s) => s.cwd === session.cwd && s.status === "active");
+  const totalTokensAcrossSessions = activeSiblings.reduce(
+    (sum, s) =>
+      sum +
+      s.tokenSpend.reduce((t, e) => t + e.inputTokens + e.outputTokens, 0),
+    0,
+  );
+  const overThreshold =
+    dailyBudget != null && totalTokensAcrossSessions > dailyBudget;
+
+  // 6. Composite verdict
   const diffVerdict: "pass" | "warn" | "block" =
     wakeFindings > 0 ? "block" : lookFindings > 0 ? "warn" : "pass";
   const policyVerdict: "pass" | "warn" | "block" =
     violations.length > 0 ? "block" : "pass";
+  const crossSessionVerdict: "pass" | "warn" | "block" = overThreshold
+    ? "warn"
+    : "pass";
 
   const verdict = worstVerdict(
     diffVerdict,
     driftVerd,
     budget.verdict,
     policyVerdict,
+    progressVerdict,
+    circuitVerdict,
+    crossSessionVerdict,
   );
 
   const verdictReasons: string[] = [];
@@ -120,9 +170,17 @@ export async function checkIteration(opts: {
     verdictReasons.push(`budget ${budget.verdict}: ${(budget.budgetPct * 100).toFixed(0)}%`);
   if (policyVerdict !== "pass")
     verdictReasons.push(`${violations.length} policy violation(s)`);
+  if (progressVerdict !== "pass")
+    verdictReasons.push(`no-progress: ${progress.reason}`);
+  if (circuitVerdict !== "pass")
+    verdictReasons.push(`circuit: ${circuit.recommendation}`);
+  if (crossSessionVerdict !== "pass")
+    verdictReasons.push(
+      `cross-session token budget exceeded: ${totalTokensAcrossSessions} > ${dailyBudget}`,
+    );
   if (verdictReasons.length === 0) verdictReasons.push("all checks passed");
 
-  // 6. Rollback point if all pass
+  // 7. Rollback point if all pass
   if (verdict === "pass") {
     session.rollbackPoints.push({
       iteration,
@@ -176,7 +234,7 @@ export async function checkIteration(opts: {
   // 8. Save session
   saveSession(session);
 
-  return {
+  const result: IterationResult = {
     sessionId: session.id,
     iteration,
     timestamp: now,
@@ -207,7 +265,29 @@ export async function checkIteration(opts: {
         offendingFiles: v.offendingFiles,
       })),
     },
+    // LE-15 / LE-16 / LE-04
+    progressCheck: {
+      stalled: progress.stalled,
+      stalledRounds: progress.stalledRounds,
+      reason: progress.reason,
+    },
+    circuitCheck: {
+      tripped: circuit.tripped,
+      tool: circuit.tool,
+      consecutiveFailures: circuit.consecutiveFailures,
+      recommendation: circuit.recommendation,
+    },
+    crossSessionCheck: {
+      totalTokensAcrossSessions,
+      activeSessionCount: activeSiblings.length,
+      overThreshold,
+    },
   };
+
+  // LE-01: attach OTEL span attributes (computed from the full result)
+  result.otelAttributes = iterationResultToOtelAttributes(result);
+
+  return result;
 }
 
 /**

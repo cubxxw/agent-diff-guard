@@ -65,12 +65,12 @@ describe("appendAuditEntry", () => {
 
     const all = readAuditEntries();
     expect(all.length).toBe(3);
-    expect(all[0].seq).toBe(1);
-    expect(all[1].seq).toBe(2);
-    expect(all[2].seq).toBe(3);
+    expect(all[0]!.seq).toBe(1);
+    expect(all[1]!.seq).toBe(2);
+    expect(all[2]!.seq).toBe(3);
     // Each entry's previousHash links to the prior entry's hash.
-    expect(all[1].previousHash).toBe(all[0].hash);
-    expect(all[2].previousHash).toBe(all[1].hash);
+    expect(all[1]!.previousHash).toBe(all[0]!.hash);
+    expect(all[2]!.previousHash).toBe(all[1]!.hash);
   });
 });
 
@@ -103,7 +103,7 @@ describe("verifyAuditChain", () => {
     const raw = readFileSync(auditFile, "utf8");
     const lines = raw.split("\n").filter((l) => l.trim());
 
-    const second = JSON.parse(lines[1]);
+    const second = JSON.parse(lines[1]!);
     second.hash = "0000000000000000000000000000000000000000000000000000000000000000";
     lines[1] = JSON.stringify(second);
 
@@ -126,7 +126,7 @@ describe("verifyAuditChain", () => {
     const raw = readFileSync(auditFile, "utf8");
     const lines = raw.split("\n").filter((l) => l.trim());
 
-    const second = JSON.parse(lines[1]);
+    const second = JSON.parse(lines[1]!);
     second.event = "TAMPERED";
     lines[1] = JSON.stringify(second);
 
@@ -150,9 +150,9 @@ describe("readAuditEntries", () => {
 
     const entries = readAuditEntries();
     expect(entries.length).toBe(2);
-    expect(entries[0].event).toBe("start");
-    expect(entries[1].event).toBe("end");
-    expect(entries[1].verdict).toBe("approve");
+    expect(entries[0]!.event).toBe("start");
+    expect(entries[1]!.event).toBe("end");
+    expect(entries[1]!.verdict).toBe("approve");
   });
 
   test("skips corrupt lines without throwing", () => {
@@ -168,7 +168,7 @@ describe("readAuditEntries", () => {
 
     const entries = readAuditEntries();
     expect(entries.length).toBe(2);
-    expect(entries[0].event).toBe("ok");
-    expect(entries[1].event).toBe("ok2");
+    expect(entries[0]!.event).toBe("ok");
+    expect(entries[1]!.event).toBe("ok2");
   });
 });

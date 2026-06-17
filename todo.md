@@ -335,7 +335,7 @@
 
 ### 近期（1-2 周）：立即可做
 
-- [ ] **LE-01 OpenTelemetry span attributes export**
+- [x] **LE-01 OpenTelemetry span attributes export**
   目的：让 Datadog/Phoenix/Langfuse 自动消费 guard verdict 数据，不需自建可观测性。
   改：`src/loop/check.ts` 的 `IterationResult` 附带标准 OTEL 属性（`guard.drift.cumulative`、`guard.budget.pct`、`guard.verdict`）。
   MCP tool response 中附带这些字段作为 structured span annotations。
@@ -348,13 +348,13 @@
   验证：读 loop-events.jsonl → 逐行验证 hash chain 完整性。
   参考：72% 组织用 agentic AI，仅 26% 有治理策略 — 先行者优势。
 
-- [ ] **LE-03 `/api/loops` 端点 + Web UI Loop Monitor 页**
+- [x] **LE-03 `/api/loops` 端点 + Web UI Loop Monitor 页**
   目的：跨 Loop 全局风险视图 — 汇总所有 active session 的 drift/budget/verdict。
   改：`src/serve-local.ts` 加 `GET /api/loops` → 调 `listSessions()` 返回 session 列表含最新 drift/budget snapshot。
   `web/app.js` + `web/index.html` 加 "Loop Monitor" 导航项和页面，展示 session 卡片（状态/漂移趋势/预算余量/最近 verdict）。
   依赖：L05 session.ts `listSessions()` 已实现。
 
-- [ ] **LE-04 跨 session token 花费报警**
+- [x] **LE-04 跨 session token 花费报警**
   目的：当同一 repo 下所有 loop session 的总 token 花费超过日预算（如 $50）时，跨 session 报警。
   改：`src/loop/check.ts` 的 `checkIteration()` 中，调 `listSessions()` 汇总同 cwd 下所有 active session 的 tokenSpend 总和，超阈值时在 verdictReasons 中追加跨 session 警告。
   可配置阈值（环境变量或 `.agent-diff-guard.toml`）。
@@ -446,7 +446,7 @@
   - MCP tool：`guard_agentguard_sync` — 同步两个系统的 budget 状态
   依赖：AgentGuard47 的 JSONL trace 格式需稳定（当前 v1.2.13）。
 
-- [ ] **LE-15 无进展检测（No-Progress Detection）**
+- [x] **LE-15 无进展检测（No-Progress Detection）**
   目的：生产 loop 六大护栏之一——检测 agent 是否在做无用功（重复错误、空 commit、相同 diff 反复出现）。
   改：`src/loop/check.ts` 新增 no-progress 检查维度：
   - 连续 N 轮（默认 3）的 diff 内容 hash 相同 → block
@@ -455,13 +455,13 @@
   在 IterationResult 中加 `progressCheck: { stalled: boolean; stalledRounds: number; reason: string }`。
   补单测。
 
-- [ ] **LE-16 Tool Call 熔断器（Circuit Breaker）**
+- [x] **LE-16 Tool Call 熔断器（Circuit Breaker）**
   目的：生产 loop 六大护栏之一——同一 tool 连续失败 N 次时降级到安全模式。
   改：`src/loop/session.ts` 的 LoopSession 新增 `toolCallHistory: { tool: string; success: boolean; timestamp: string }[]`。
   `src/loop/check.ts` 新增熔断检查：同一 tool 连续失败 3 次 → verdict 追加降级建议（read-only tools、no delegation、capped retries）。
   参考：Oracle Runtime Budget Guardrails 框架定义的三级降级策略。
 
-- [ ] **LE-17 跨 agent 中立性适配（Cursor / Codex / Copilot）**
+- [x] **LE-17 跨 agent 中立性适配（Cursor / Codex / Copilot）**
   目的：ROADMAP.md §3.3 的延伸——agent-diff-guard 作为中立第三方守门人，不仅守护 Claude Code。
   改：`src/loop/hook.ts` 增加对其他 agent 的 hook 适配：
   - Cursor：通过 `.cursorrules` 集成
@@ -470,7 +470,7 @@
   每种适配器一个文件，统一调 `checkIteration()`。
   CLI 子命令：`agent-diff-guard loop install-hook --agent cursor|codex|copilot`
 
-- [ ] **LE-18 Loop Readiness Dashboard Widget**
+- [x] **LE-18 Loop Readiness Dashboard Widget**
   目的：在 Web UI 首页加一个"Loop 就绪度"小组件，显示当前 repo 的 loop 准备程度（类似 loop-audit 的 L0-L3）。
   改：`web/app.js` 首页加 widget：
   - L0: 无 loop 配置

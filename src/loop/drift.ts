@@ -105,7 +105,7 @@ export function multiAgentDriftVector(
     for (const c of categories) {
       freq.set(c, (freq.get(c) ?? 0) + 1);
     }
-    let best = categories[0];
+    let best: string = categories[0] ?? "unknown";
     let bestCount = 0;
     for (const [cat, count] of freq) {
       if (count > bestCount) {

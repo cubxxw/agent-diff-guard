@@ -35,7 +35,7 @@ describe("parseImplementationPlan", () => {
   it("parses a single done task (uppercase X)", () => {
     const content = "- [X] Setup database\n";
     const result = parseImplementationPlan(content);
-    expect(result.tasks[0].done).toBe(true);
+    expect(result.tasks[0]!.done).toBe(true);
     expect(result.currentTask).toBeNull();
   });
 
@@ -90,7 +90,7 @@ describe("parseImplementationPlan", () => {
     const content = "  - [ ] Indented task\n";
     const result = parseImplementationPlan(content);
     expect(result.tasks).toHaveLength(1);
-    expect(result.tasks[0].text).toBe("Indented task");
+    expect(result.tasks[0]!.text).toBe("Indented task");
   });
 });
 

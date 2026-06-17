@@ -24,6 +24,8 @@ function makeSession(overrides: Partial<LoopSession> = {}): LoopSession {
     rollbackPoints: [],
     findingsLog: [],
     riskTrend: [],
+    diffHashHistory: [],
+    toolCallHistory: [],
     ...overrides,
   };
 }

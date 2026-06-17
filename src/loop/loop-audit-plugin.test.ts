@@ -122,10 +122,10 @@ describe("computeGuardReadiness", () => {
     });
 
     const byName = Object.fromEntries(r.dimensions.map((d) => [d.name, d]));
-    expect(byName["drift-detection"].present).toBe(true);
-    expect(byName["budget-gate"].present).toBe(false);
-    expect(byName["emergency-brake"].present).toBe(true);
-    expect(byName["post-tool-use-hook"].present).toBe(false);
+    expect(byName["drift-detection"]!.present).toBe(true);
+    expect(byName["budget-gate"]!.present).toBe(false);
+    expect(byName["emergency-brake"]!.present).toBe(true);
+    expect(byName["post-tool-use-hook"]!.present).toBe(false);
   });
 });
 

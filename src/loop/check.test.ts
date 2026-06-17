@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { checkIteration, quickCheck } from "./check";
 import type { CheckDeps } from "./check";
 import { startSession } from "./session";
-import type { FileChange, Finding } from "../rules";
+import type { Finding } from "../rules";
 
 let testDir: string;
 

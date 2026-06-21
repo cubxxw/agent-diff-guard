@@ -22,6 +22,20 @@
 
 加上一个 CI/lint 做不了、agent 时代独有的判断——**任务 vs 实际改动的偏离**:你声称的任务是 A,agent 却顺手改了和 A 无关的 B。
 
+### 为什么是"边界闸门",而不是"逐行审查"
+
+业界与学术对 agent loop 监督的一个被反复验证的结论是:让人**逐行审查每个 diff** 既不可持续也不可靠——人会疲劳、会橡皮图章。有效的做法是把人类判断上移到工作流的**两个边界**:开头定规约 / 护栏 / 依赖白名单,结尾验安全 / 结果。这正是本产品"平时放行、关键时刻刹车"哲学的背书。
+
+在 loop 验证层(`agent-diff-guard loop`)里这两道边界闸门是显式的:
+
+- **开头闸门** — `.loop-contract.yaml`(`src/loop/contract.ts`)要求每个无人值守 loop 启动前声明六个字段:`trigger / scope / action / budget / stop / escalate`。规约不全就不放行。
+- **结尾闸门** — `loop verify`(`src/loop/verify.ts`)在 session 结束时跑一次**汇总验收**:把整个 session 的累计 drift、命中的 wake-you-up findings、policy 违规、预算消耗汇总成一个边界裁决 `pass / needs-review`。这与逐次迭代的 `loop check` 不同——它审的是**整个 session**,而不是每个 diff。
+
+```bash
+agent-diff-guard loop verify            # 对 active session 出结尾裁决(needs-review 时退出码 1)
+agent-diff-guard loop verify --json     # 机器可读,便于接 CI / 通知
+```
+
 ## 快速开始
 
 ### 前置要求
@@ -38,8 +52,14 @@ curl -fsSL https://bun.sh/install | bash   # 没装 Bun 的话
 git clone https://github.com/cubxxw/agent-diff-guard
 cd agent-diff-guard
 bun install
-bun src/cli.ts --help     # 看到帮助 = 装好了
+bun src/cli.ts --help        # 命令跑通
+bun src/cli.ts doctor        # 接入自检:回答"我接好了吗"(事件/采集源/仓库)
 ```
+
+> **命令读法**:本包尚未发布到 npm,全局命令 `agent-diff-guard` 默认不可用。
+> 下文为简洁写作 `agent-diff-guard <cmd>`,**请读作 `bun src/cli.ts <cmd>`**(在本仓库目录下),
+> 或自行设别名:`alias agent-diff-guard='bun /绝对路径/agent-diff-guard/src/cli.ts'`。
+> "装好了"的真正里程碑不是看到 `--help`,而是 `doctor` 显示有守门事件 / 已识别采集源。
 
 ### 用法一:手动扫一次当前改动
 
@@ -63,6 +83,19 @@ bun /path/to/agent-diff-guard/src/cli.ts check \
 ```
 
 装好后,每次 `git push` 前守门人会自动跑。平时静默放行;只有发现该看一眼的改动时才刹车。
+
+### 用法三:挂进 Claude Code,**编码前**实时刹车
+
+pre-push 是"提交前"那道闸;再往前一步,可以在 agent **动手改文件之前**就刹车——
+通过 Claude Code 的 PreToolUse hook。生成配置:
+
+```bash
+bun src/cli.ts loop install-hook --agent claude    # 输出一段 settings.json,贴进去即可
+```
+
+把输出贴进 `~/.claude/settings.json` 或 `<项目>/.claude/settings.json` 的 `hooks` 里。
+高危改动(改 CI / 写密钥 / 动鉴权)在 agent 落笔前就弹人工确认(ask),平时静默放行。
+只看 agent 声明的入参、不读 diff 正文,隐私不出本机。装完跑 `bun src/cli.ts doctor` 验证。
 
 ## 看懂输出
 

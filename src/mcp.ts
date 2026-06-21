@@ -22,7 +22,7 @@ import { buildDangerMap, renderMarkdown } from "./context";
 import { readEvents } from "./logger";
 import { allTranscripts } from "./transcript";
 import { buildAllInsights } from "./insights";
-import { listPending } from "./inbox";
+import { listPending, markDone } from "./inbox";
 import { registerLoopTools } from "./loop-mcp";
 
 /** 取某目录的 git remote 去敏标识(host+path),取不到返回 null。 */
@@ -142,7 +142,7 @@ server.registerTool(
   {
     title: "待处理决策",
     description:
-      "List pending decisions that a human queued from the agent-diff-guard dashboard for the terminal agent to act on (e.g. 'downgrade this rule in this repo', 'review this directory'). Use this to pick up human-in-the-loop instructions. Each item has an id, a title, and an actionable instruction. After acting on one, archive it via the CLI `agent-diff-guard inbox --done <id>`.",
+      "List pending decisions that a human queued from the agent-diff-guard dashboard for the terminal agent to act on (e.g. 'downgrade this rule in this repo', 'review this directory'). Use this to pick up human-in-the-loop instructions. Each item has an id, a title, and an actionable instruction. After acting on one, archive it with the `mark_decision_done` tool (passing its id) so it leaves the pending queue.",
     inputSchema: {},
   },
   async () => {
@@ -150,6 +150,27 @@ server.registerTool(
     if (items.length === 0) return text("信箱为空 —— 面板还没下发任何决策。");
     const out = items.map((it) => `▸ [${it.id}] ${it.title}\n  指令:${it.action}`);
     return text(`${items.length} 条待处理决策:\n\n${out.join("\n\n")}`);
+  }
+);
+
+// ── Tool 5: mark_decision_done ───────────────────────────────────────
+// 闭环最后一公里:agent 取走并执行完一条决策后,在【同一 MCP 通道】里归档它 ——
+// 不必跳出去敲 CLI。这才让"面板→终端→执行→回写"在 agent 自己的循环里闭合。
+server.registerTool(
+  "mark_decision_done",
+  {
+    title: "归档已处理决策",
+    description:
+      "Archive a pending decision after the terminal agent has acted on it (moves it from the pending queue to done, so it stops showing up in list_pending_decisions and the dashboard inbox badge). Pass the decision id from list_pending_decisions.",
+    inputSchema: { id: z.string().describe("The decision id to archive (from list_pending_decisions).") },
+  },
+  async ({ id }) => {
+    const ok = markDone(id);
+    return text(
+      ok
+        ? `已归档决策 [${id}] —— 已移出待处理队列。`
+        : `未找到待处理决策 [${id}](可能已归档,或 id 有误)。`
+    );
   }
 );
 

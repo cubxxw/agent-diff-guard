@@ -26,6 +26,7 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
 用法:
   agent-diff-guard check [选项]      扫一次改动(默认行为)
   agent-diff-guard serve [--port N]  启动本地审计面板(读历史守门记录)
+  agent-diff-guard doctor [--json]   接入自检:回答"我接好了吗"(事件/采集源/仓库)
   agent-diff-guard context [--json]  输出本仓库"危险地图",供 agent 编码前读取
   agent-diff-guard inbox [--json]    读取面板下发的决策指令(供终端 Claude Code 消费)
                                      [--done <id>] 标记某条已处理并归档
@@ -61,6 +62,11 @@ function parseArgs(argv: string[]): Args {
     if (v === "--range") a.range = next() ?? a.range;
     else if (v === "--task") a.task = next();
     else if (v === "--max") a.max = Math.max(1, parseInt(next() ?? "3", 10) || 3);
+    // 未识别的 --flag(如 --rang 漏了 e)静默忽略会让范围参数失效却毫无察觉 ——
+    // 打一行 stderr 警告(不硬退出,符合"不烦":check 仍照常跑,只是提醒可能 typo)。
+    else if (v && v.startsWith("--")) {
+      console.error(C.yellow(`[警告] 未识别的参数 ${v} —— 已忽略,请检查是否拼写错误`));
+    }
   }
   return a;
 }
@@ -104,6 +110,17 @@ function render(findings: Finding[], max: number): void {
   }
 }
 
+/**
+ * 取扫描当时 HEAD 的 commit short hash(7 位)。审计是历史回放 —— 必须在扫描时落盘,
+ * 不能事后补跑 git(仓库状态会变)。取不到返回 null(空仓/不在 git 里),不影响守门。
+ */
+function commitShort(): string | null {
+  const r = spawnSync("git", ["rev-parse", "--short=7", "HEAD"], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const h = r.stdout.trim();
+  return h || null;
+}
+
 /** 取 git remote origin 的去敏标识(host+path,剥掉协议与可能的 token)。取不到返回 null。 */
 function repoRemote(): string | null {
   const r = spawnSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" });
@@ -142,6 +159,53 @@ async function main(): Promise<void> {
     const map = buildDangerMap({ repo: repoRemote(), events: readEvents() });
     console.log(asJson ? toJson(map) : renderMarkdown(map));
     process.exit(0);
+  }
+
+  // doctor 子命令:一条命令回答"我接好了吗"。新人装完 hook 后没有任何确认手段,
+  // 静默守门和"根本没装好"对新人无法区分 —— doctor 把接入状态显式摊开。
+  if (cmd === "doctor") {
+    const { readEvents, logDir } = await import("./logger");
+    const { availableCollectors } = await import("./collectors/registry");
+    const { allTranscripts } = await import("./transcript");
+    const asJson = rawArgs.includes("--json");
+
+    const events = readEvents();
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+    const sources = availableCollectors().map((c) => ({ id: c.id, name: c.name }));
+    const transcripts = allTranscripts();
+    const reposWithDir = transcripts.filter((t) => t.repoDir).length;
+
+    if (asJson) {
+      console.log(JSON.stringify({
+        home: logDir(),
+        events: { count: events.length, lastAt: lastEvent?.timestamp ?? null },
+        collectors: sources,
+        reposObserved: { total: transcripts.length, withGitDir: reposWithDir },
+      }, null, 2));
+      process.exit(0);
+    }
+
+    console.log(C.bold("agent-diff-guard · 接入自检"));
+    console.log("");
+    console.log(`数据目录: ${logDir()}`);
+    if (events.length > 0) {
+      console.log(C.green(`✓ 守门事件: ${events.length} 条`) + C.dim(` (最近 ${lastEvent?.timestamp ?? "?"})`));
+    } else {
+      console.log(C.yellow("• 守门事件: 0 条 —— 还没扫过任何改动。在项目里跑 `bun src/cli.ts check`,或装 pre-push hook 后 push 一次。"));
+    }
+    if (sources.length > 0) {
+      console.log(C.green(`✓ 已识别采集源: ${sources.map((s) => s.name).join(", ")}`));
+    } else {
+      console.log(C.yellow("• 采集源: 未识别到 —— 没找到 Claude Code 等 agent 的本地日志。"));
+    }
+    if (reposWithDir > 0) {
+      console.log(C.green(`✓ 观察到 ${reposWithDir} 个仓库的 agent 活动`));
+    } else {
+      console.log(C.dim("• 还没观察到任何仓库的 agent 活动。"));
+    }
+    console.log("");
+    console.log(C.dim("挂实时守门(PreToolUse 刹车): bun src/cli.ts loop install-hook --agent claude"));
+    process.exit(events.length > 0 || sources.length > 0 ? 0 : 1);
   }
 
   // inbox 子命令:终端侧消费面板下发的决策指令。这是"面板 → 终端 Claude Code"闭环的终端端。
@@ -270,6 +334,7 @@ async function main(): Promise<void> {
       findings,
       disposition: hasWake ? "blocked" : "auto-pass",
       repoRemote: repoRemote(),
+      commitHash: commitShort(),
     });
     appendEvent(event);
   } catch (e) {

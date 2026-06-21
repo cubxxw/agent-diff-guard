@@ -46,6 +46,7 @@ const ICONS = {
   Inbox: "M22 12h-6l-2 3h-4l-2-3H2|M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z",
   Sparkles: "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z",
   ArrowRight: "M5 12h14|M12 5l7 7-7 7",
+  Download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|M7 10l5 5 5-5|M12 15V3",
   Check: "M20 6 9 17l-5-5",
   CornerUpLeft: "M20 20v-7a4 4 0 0 0-4-4H4|M9 14l-5-5 5-5",
   Scale: "m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z|m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z|M7 21h10|M12 3v18|M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2",
@@ -71,6 +72,7 @@ const ICONS = {
   ChevronRight: "m9 18 6-6-6-6",
   ChevronUp: "m18 15-6-6-6 6",
   GitBranch: "M6 3v12|M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M18 9a9 9 0 0 1-9 9",
+  Menu: "M4 6h16|M4 12h16|M4 18h16",
 };
 function Icon(name, size = 16, style) {
   const wrap = h("span", { class: "ic", style });
@@ -133,7 +135,12 @@ function SectionTitle(label, hint, right) {
     h("div", null, h("span", { class: "ds-label sec-label" }, label), hint && h("span", { class: "sec-hint" }, hint)),
     right && h("div", { class: "sec-right" }, right));
 }
-function Card(props, ...kids) { return h("div", { class: "card " + (props.class || ""), style: props.style, onClick: props.onClick }, ...kids); }
+function Card(props, ...kids) {
+  // 透传 class/style 外的其余 props(role/tabindex/aria-*/onKeydown 等),让卡片可按需当按钮、键盘可达。
+  const rest = {};
+  for (const k in props) { if (k !== "class" && k !== "style") rest[k] = props[k]; }
+  return h("div", Object.assign({ class: "card " + (props.class || ""), style: props.style }, rest), ...kids);
+}
 function Stat(value, label, sub, tone) {
   return h("div", { class: "card stat" },
     h("div", { class: "stat-n" + (tone ? " tone-" + tone : "") }, value),
@@ -148,6 +155,13 @@ function LevelPill(level) {
 function Chip(text) { return h("span", { class: "chip-rule" }, text); }
 const ORIGIN_META = { live: ["实时", "origin-live"], history: ["历史", "origin-history"], demo: ["演示", "origin-demo"] };
 function OriginBadge(origin) { const m = ORIGIN_META[origin]; return m ? h("span", { class: "origin " + m[1] }, m[0]) : false; }
+// "现在还能不能处置"——决定放行/驳回是否仍有意义。前端最该让人一眼看清的状态。
+const DISPOSABLE_META = {
+  uncommitted: ["可处置 · 未提交", "disp-ok", "改动还在工作区,放行/驳回都来得及"],
+  unpushed: ["可处置 · 未推送", "disp-warn", "已提交但未 push,仍可本地 reset/amend"],
+  history: ["已落地 · 仅记录", "disp-locked", "历史改动早已合并,裁决只作留痕、不可逆"],
+};
+function DisposableBadge(d) { const m = DISPOSABLE_META[d]; return m ? h("span", { class: "disp " + m[1], title: m[2] }, m[0]) : false; }
 function Btn(label, { kind = "primary", icon, onClick, small } = {}) {
   return h("button", { class: `btn btn-${kind}` + (small ? " btn-sm" : ""), onClick }, icon && Icon(icon, small ? 13 : 15), label);
 }
@@ -219,10 +233,16 @@ function DriftMeter(value) {
     h("div", { class: "drift-track" }, h("div", { class: "drift-fill", style: { width: pct + "%", background: tone } })),
     h("span", { class: "mono drift-num" }, value == null ? "—" : pct + "%"));
 }
-function DiffBlock(lines) {
-  return h("div", { class: "diff" }, ...(lines || []).map((l) =>
-    h("div", { class: "diff-line " + (l.t === "+" ? "diff-add" : l.t === "-" ? "diff-del" : "") },
-      h("span", { class: "diff-sign" }, l.t === " " ? "" : l.t), h("span", null, l.s))));
+function DiffBlock(lines, agent) {
+  // 行级 AI 归因:新增行(+)就是 agent 写的 —— 给它标 ai-line + tooltip,
+  // 让评审一眼聚焦"AI 写的行"(研究验证的有效模式)。不承诺跨 squash/rebase 持久化,
+  // 只对当下这次实时 diff 标注 —— 诚实地只声称做得到的。
+  const aiTitle = agent ? `${agent} 新增的行` : "AI 新增的行";
+  return h("div", { class: "diff" }, ...(lines || []).map((l) => {
+    const isAi = l.t === "+";
+    return h("div", { class: "diff-line " + (l.t === "+" ? "diff-add" : l.t === "-" ? "diff-del" : "") + (isAi ? " ai-line" : ""), title: isAi ? aiTitle : undefined },
+      h("span", { class: "diff-sign" }, l.t === " " ? "" : l.t), h("span", null, l.s));
+  }));
 }
 function HeatDot(heat) {
   const colors = ["var(--heatmap-empty)", "var(--heatmap-low)", "var(--heatmap-mid)", "var(--heatmap-high)"];
@@ -244,12 +264,15 @@ const NAV = [
     { id: "flight", label: "越界记录", en: "VIOLATIONS", icon: "PlaneTakeoff" },
     { id: "danger", label: "危险地图", en: "DANGER MAP", icon: "Map" },
   ]},
-  { group: "用量 USAGE", items: [{ id: "usage", label: "用量与成本", en: "COST", icon: "Activity" }] },
-  { group: "闭环 LOOP", items: [
+  // USAGE / LOOP 是辅助能力,默认折叠 —— 让侧栏第一屏聚焦"守门 + 飞行记录"核心主线,
+  // 而非把 12 个入口平铺成综合 dashboard(产品定位:关键时刻刹车,不做 dashboard)。
+  { group: "用量 USAGE", collapsible: true, items: [{ id: "usage", label: "用量与成本", en: "COST", icon: "Activity" }] },
+  { group: "闭环 LOOP", collapsible: true, items: [
     { id: "projects", label: "项目", en: "PROJECTS", icon: "HardDrive" },
     { id: "inbox", label: "终端信箱", en: "INBOX", icon: "Inbox", badge: "inbox" },
     { id: "runlog", label: "执行记录", en: "EXEC LOG", icon: "Terminal" },
     { id: "loops", label: "Loop 监控", en: "LOOP MONITOR", icon: "Repeat" },
+    { id: "morning", label: "晨报", en: "MORNING", icon: "Sunrise" },
   ]},
 ];
 const PAGE_TITLE = {
@@ -264,21 +287,55 @@ const PAGE_TITLE = {
   inbox: ["终端信箱", "面板裁决 → 指令 → 终端 agent 取走执行"],
   runlog: ["执行记录", "daemon 每一次执行与拦截的完整留痕"],
   loops: ["Loop 监控", "跨所有 loop session 的全局风险视图 —— 漂移、预算、最近裁决一眼看完"],
+  morning: ["晨报", "睡醒第一眼:挑一个 session,5 秒决定继续/复盘/回滚"],
 };
 
 const state = {
   route: (() => {
     const fromHash = (location.hash || "").replace(/^#/, "").trim();
     if (fromHash) return fromHash; // URL hash 优先:可深链/分享/刷新恢复(P2-4)
-    try { return localStorage.getItem("adg-route") || "overview"; } catch { return "overview"; }
+    // 默认落在审查队列(待处理风险主线)而非总览 —— 产品是"关键时刻刹车",不是 dashboard。
+    // 老用户的上次位置仍然尊重(localStorage 优先)。
+    try { return localStorage.getItem("adg-route") || "queue"; } catch { return "queue"; }
   })(),
   decisions: (() => { try { return JSON.parse(localStorage.getItem("adg-decisions") || "{}"); } catch { return {}; } })(),
   cache: {},
   badges: { queue: 0, inbox: 0 },
+  // 折叠的导航分组(默认 USAGE/LOOP 收起,聚焦核心)。存 localStorage,记住用户偏好。
+  navCollapsed: (() => {
+    try {
+      const saved = localStorage.getItem("adg-nav-collapsed");
+      return saved ? JSON.parse(saved) : { "用量 USAGE": true, "闭环 LOOP": true };
+    } catch { return { "用量 USAGE": true, "闭环 LOOP": true }; }
+  })(),
 };
+function toggleNavGroup(group) {
+  state.navCollapsed[group] = !state.navCollapsed[group];
+  try { localStorage.setItem("adg-nav-collapsed", JSON.stringify(state.navCollapsed)); } catch {}
+  render();
+}
 function persistDecisions() { try { localStorage.setItem("adg-decisions", JSON.stringify(state.decisions)); } catch {} }
+// 把人工裁决理由同步到本机 decisions.jsonl(证据链)。best-effort:写失败不打扰用户
+// (本地 localStorage 已留痕,服务端持久化是增强而非阻塞)。disposition 用服务端枚举值。
+function syncDecision(targetId, disposition, reason) {
+  api("/api/decisions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetId, disposition, reason: reason || "" }),
+  }).catch(() => {});
+}
+// 移动端抽屉开关:纯 UI 临时状态,不持久化。窄屏下侧栏默认隐藏,汉堡按钮切换。
+let drawerOpen = false;
+// 切抽屉:更新 body class(驱动 CSS) + 重渲染(让汉堡图标在 ☰/✕ 间切换)。
+// rerender 参数为 false 时只改 class(供 nav() 这类紧接着自己会 render 的调用方复用,避免双重渲染)。
+function setDrawer(open, rerender = true) {
+  drawerOpen = open;
+  document.body.classList.toggle("drawer-open", open);
+  if (rerender) render();
+}
 function nav(r) {
   state.route = r;
+  setDrawer(false, false); // 点击导航项后自动收起抽屉(窄屏);下面紧接 render(),无需重复
   try { localStorage.setItem("adg-route", r); } catch {}
   if (location.hash.replace(/^#/, "") !== r) location.hash = r; // 同步 URL,可分享/前进后退(P2-4)
   render();
@@ -296,23 +353,39 @@ function render() {
   const [title, subtitle] = PAGE_TITLE[state.route];
   const root = $("#root");
   root.innerHTML = "";
+  document.body.classList.toggle("drawer-open", drawerOpen); // render 会重建 DOM,重新同步抽屉状态
   root.appendChild(
     h("div", { class: "shell" },
+      // 移动端汉堡按钮(≤640px 显示,固定左上角);点击切换抽屉
+      h("button", { class: "drawer-toggle", "aria-label": "切换导航菜单", onClick: () => setDrawer(!drawerOpen) }, Icon(drawerOpen ? "X" : "Menu", 20)),
+      // 抽屉打开时的半透明遮罩,点击关闭
+      h("div", { class: "drawer-backdrop", onClick: () => setDrawer(false) }),
       h("aside", { class: "side" },
         h("div", { class: "brand" },
           h("div", { class: "brand-mark" }, Icon("Shield", 18)),
           h("div", null, h("div", { class: "brand-name" }, "AGENT-DIFF-GUARD"),
             h("div", { class: "brand-sub", title: "合并前的 AI agent 改动守门人:平时放行,关键时刻刹车。wake-you-up=该半夜叫醒你确认的高危改动;look-once=看一眼即可的常规改动。" }, "数据本地存储 · Ask Guard 联网除外"))),
-        h("nav", { class: "nav" }, ...NAV.map((g) =>
-          h("div", { class: "nav-group" },
-            h("div", { class: "ds-label nav-head" }, g.group),
-            ...g.items.map((it) => {
+        h("nav", { class: "nav" }, ...NAV.map((g) => {
+          const collapsed = g.collapsible && state.navCollapsed[g.group];
+          // 折叠时聚合组内未读 badge,在组头露出,避免把"终端信箱有 5 条"藏没了。
+          const groupBadge = collapsed
+            ? g.items.reduce((sum, it) => sum + (it.badge ? (state.badges[it.badge] || 0) : 0), 0)
+            : 0;
+          return h("div", { class: "nav-group" + (collapsed ? " collapsed" : "") },
+            g.collapsible
+              ? h("button", { class: "ds-label nav-head nav-head-btn", onClick: () => toggleNavGroup(g.group), "aria-expanded": String(!collapsed) },
+                  Icon(collapsed ? "ChevronRight" : "ChevronDown", 12),
+                  h("span", null, g.group),
+                  groupBadge > 0 ? h("span", { class: "nav-badge look" }, groupBadge) : false)
+              : h("div", { class: "ds-label nav-head" }, g.group),
+            ...(collapsed ? [] : g.items.map((it) => {
               const badge = it.badge ? state.badges[it.badge] : 0;
               return h("button", { class: "nav-item" + (state.route === it.id ? " on" : ""), onClick: () => nav(it.id) },
                 Icon(it.icon, 16),
                 h("span", { class: "nav-label" }, it.label),
                 badge > 0 ? h("span", { class: "nav-badge" + (it.badge === "inbox" ? " look" : "") }, badge) : h("span", { class: "nav-en" }, it.en));
-            })))),
+            })));
+        })),
         h("div", { class: "side-foot" },
           h("div", { class: "side-status" }, h("span", { class: "dot dot-pass dot-live" }), h("span", { id: "side-repos" }, "守门中")),
           h("button", { class: "side-reset", onClick: () => { state.decisions = {}; persistDecisions(); render(); toast("已重置本地裁决记录", "RefreshCw"); } }, "重置本地裁决"))),
@@ -320,7 +393,7 @@ function render() {
         h("header", { class: "topbar" },
           h("div", null, h("h1", { class: "top-title" }, title), h("div", { class: "top-sub" }, subtitle)),
           h("div", { class: "top-right" },
-            h("div", { class: "searchbox", onClick: openPalette, role: "button", "aria-label": "搜索(⌘K)" },
+            h("div", { class: "searchbox", onClick: openPalette, role: "button", tabindex: "0", "aria-label": "搜索(⌘K)", onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPalette(); } } },
               Icon("Search", 15),
               h("span", { class: "searchbox-ph" }, "搜索发现、规则,或问守门人…"),
               h("kbd", { class: "searchbox-kbd" }, "⌘K")),
@@ -340,15 +413,33 @@ async function refreshBadges() {
     state.cache.findings = q;
     state.badges.queue = q.filter((f) => !state.decisions[f.id]).length;
     state.badges.inbox = inbox.filter((i) => i.status === "pending").length;
-    const repoCount = new Set(q.map((f) => f.repo)).size;
-    const sr = $("#side-repos"); if (sr) sr.textContent = repoCount ? `守门中 · ${repoCount} 仓库` : "守门中";
+    // 仓库计数只数真实信号(排除 demo 兜底种子,origin==="demo")。零真实数据时显示"未接入",
+    // 而不是把 demo 仓库 your-org/your-repo 当成"守门中 · 1 仓库"误导新用户。
+    const repoCount = new Set(q.filter((f) => f.origin !== "demo").map((f) => f.repo)).size;
+    const sr = $("#side-repos"); if (sr) sr.textContent = repoCount ? `守门中 · ${repoCount} 仓库` : "未接入";
   } catch {}
   rerenderNavBadges();
   if (document.getElementById("ai-overlay")) renderOverlays(); // 同步 orb badge / nudge
 }
 function rerenderNavBadges() {
+  // 不调 render()(会与 render 末尾的 refreshBadges 互相触发成死循环),纯 DOM patch:
+  //   展开组 → patch 各 item 的 badge;
+  //   折叠组 → item 未渲染,改 patch 组头的聚合 badge(否则"信箱 5 条"会被藏没)。
   document.querySelectorAll(".nav-group").forEach((grp, gi) => {
-    NAV[gi].items.forEach((it, ii) => {
+    const g = NAV[gi];
+    const collapsed = g.collapsible && state.navCollapsed[g.group];
+    if (collapsed) {
+      const headBtn = grp.querySelector(".nav-head-btn");
+      if (!headBtn) return;
+      const total = g.items.reduce((s, it) => s + (it.badge ? (state.badges[it.badge] || 0) : 0), 0);
+      const existing = headBtn.querySelector(".nav-badge");
+      if (total > 0) {
+        if (existing) existing.textContent = total;
+        else headBtn.appendChild(h("span", { class: "nav-badge look" }, total));
+      } else if (existing) existing.remove();
+      return;
+    }
+    g.items.forEach((it, ii) => {
       const btn = grp.querySelectorAll(".nav-item")[ii];
       if (!btn) return;
       const badge = it.badge ? state.badges[it.badge] : 0;
@@ -386,6 +477,9 @@ const PAGES = {
       const pending = findings.filter((f) => !state.decisions[f.id]);
       const wakeN = pending.filter((f) => f.level === "wake").length;
       const lookN = pending.filter((f) => f.level === "look").length;
+      // 零真实数据判定:events.jsonl 一次守门扫描都没有(demo 兜底只塞 findings 队列,
+      // 不影响 events 统计)。此时 pending 里的 wake/look 全来自 demo 种子,不能当真实警报。
+      const noRealData = (ov.totalScans || 0) === 0;
       const calm = wakeN === 0;
       const rows = tl.map((r) => ({ date: r.date, pass: r.passCount, look: r.lookCount, wake: r.wakeCount, event: r.eventCount })).slice(-14);
       const activity = disp.slice(0, 6).map((d) => ({
@@ -397,8 +491,25 @@ const PAGES = {
       }));
       // 点活动项 → 跳守门记录并自动展开那一条
       const gotoAudit = (id) => { if (id) auditOpen.add(id); nav("audit"); };
+      // 零真实数据:用平静态 onboarding 卡替代 demo 警报顶栏。审查队列页的 demo 兜底仍保留,
+      // 新人点进去能走通闭环,但总览第一眼不能拿 demo 当真实警报破坏"平时平静"的信任。
+      const onboardCard = Card({ class: "verdict verdict-calm" },
+        h("div", { class: "verdict-left" },
+          h("span", { class: "ds-label verdict-tag" }, "尚未接入 · 等待第一次守门"),
+          h("p", { class: "verdict-tagline" }, "AI agent 改动守门人 —— 平时放行,关键时刻刹车。"),
+          h("h2", { class: "verdict-h" }, "还没有守门数据 —— 这里会很安静。"),
+          h("p", { class: "verdict-p" }, "本机还没有任何真实守门事件。跑一次检查或挂上 hook,守门人就会开始记录;平时它什么都不打扰你,只在关键改动时叫醒你。"),
+          h("ol", { class: "onboard-steps" },
+            h("li", null, h("span", { class: "onboard-n mono" }, "1"), h("div", null, h("div", null, "在项目里跑一次检查,或装上 pre-push hook"), h("code", { class: "onboard-cmd mono" }, "bun src/cli.ts check"))),
+            h("li", null, h("span", { class: "onboard-n mono" }, "2"), h("div", null, h("div", null, "给 AI agent 挂实时守门"), h("code", { class: "onboard-cmd mono" }, "bun src/cli.ts loop install-hook --agent claude"))),
+            h("li", null, h("span", { class: "onboard-n mono" }, "3"), h("div", null, h("div", null, "自检环境是否就绪"), h("code", { class: "onboard-cmd mono" }, "bun src/cli.ts doctor")))),
+          h("div", { class: "verdict-actions" },
+            Btn("先看看审查队列长什么样", { kind: "ghost", icon: "ArrowRight", onClick: () => nav("queue") }))),
+        h("div", { class: "verdict-right" },
+          h("div", { class: "verdict-big mono" }, "—"),
+          h("div", { class: "ds-label" }, "等待接入")));
       return F(
-        Card({ class: "verdict " + (calm ? "verdict-calm" : "verdict-alert") },
+        noRealData ? onboardCard : Card({ class: "verdict " + (calm ? "verdict-calm" : "verdict-alert") },
           h("div", { class: "verdict-left" },
             h("span", { class: "ds-label verdict-tag" }, calm ? "今日态势 · 平静" : "今日态势 · 需要你"),
             // 产品定位一句话(P1-7):新用户 5 秒看懂这是什么
@@ -418,7 +529,8 @@ const PAGES = {
           Stat(ov.totalScans, "总扫描", "本机 events.jsonl"),
           Stat(ov.totalWake, "wake-you-up 命中", `${ov.totalBlocked} 次 push 被刹住`, "error"),
           Stat(Math.round(ov.passRate * 1000) / 10 + "%", "自动放行率", "宁可漏,不可烦", "success"),
-          Stat(new Set(findings.map((f) => f.repo)).size || "0", "当前在审仓库", "pre-push + MCP 双通道")),
+          // 零真实数据时 findings 全是 demo 兜底,不能据此显示"在审仓库",改显"未接入"。
+          Stat(noRealData ? "未接入" : (new Set(findings.map((f) => f.repo)).size || "0"), "当前在审仓库", "pre-push + MCP 双通道")),
         h("div", { class: "two-col" },
           Card({}, SectionTitle("风险趋势 · 14 天", "悬停看当天数值,点柱子进守门记录"),
             rows.length ? RiskBars(rows, 132, () => nav("audit")) : Empty("还没有趋势数据", "Activity"),
@@ -441,14 +553,26 @@ const PAGES = {
     (findings) => QueueView(findings),
     h("div", { class: "queue-grid" }, h("div", { class: "skel", style: { height: "200px", borderRadius: "14px" } }), h("div", { class: "skel", style: { height: "400px", borderRadius: "14px" } }))),
 
-  audit: () => loadPage(() => api("/api/stats/dispositions"), (disp) => AuditView(disp)),
+  audit: () => loadPage(
+    async () => {
+      // 裁决理由(decisions.jsonl)与处置流水并行取;理由接口失败不拖垮主表(降级为空)。
+      const [disp, decisions] = await Promise.all([
+        api("/api/stats/dispositions"),
+        api("/api/decisions").catch(() => ({})),
+      ]);
+      return { disp, decisions };
+    },
+    ({ disp, decisions }) => AuditView(disp, decisions)),
   rules: () => loadPage(
     async () => {
-      const rules = await api("/api/stats/rules");
+      const [rules, overrides] = await Promise.all([
+        api("/api/stats/rules"),
+        api("/api/rules/overrides").catch(() => ({ version: 1, overrides: {} })),
+      ]);
       const findings = state.cache.findings || (state.cache.findings = await api("/api/findings"));
-      return { rules, findings };
+      return { rules, findings, overrides };
     },
-    ({ rules, findings }) => RulesView(rules, findings)),
+    ({ rules, findings, overrides }) => RulesView(rules, findings, overrides)),
   flight: () => loadPage(() => api("/api/violations"), (v) => FlightView(v)),
   danger: () => loadPage(() => api("/api/danger-map"), (map) => DangerView(map)),
   usage: () => loadPage(
@@ -463,7 +587,108 @@ const PAGES = {
   inbox: () => loadPage(() => api("/api/inbox/list"), (items) => InboxView(items)),
   runlog: () => loadPage(() => api("/api/runlog"), (data) => RunlogView(data)),
   loops: () => loadPage(() => api("/api/loops"), (sessions) => LoopMonitorView(sessions)),
+  morning: () => loadPage(
+    async () => {
+      const sessions = await api("/api/loops");
+      const id = morningState.selectedId || sessions[0]?.id || null;
+      if (!id) return { sessions, report: null, selectedId: null };
+      try {
+        const report = await api("/api/loop/report?session=" + encodeURIComponent(id));
+        return { sessions, report, selectedId: id };
+      } catch {
+        return { sessions, report: null, selectedId: id };
+      }
+    },
+    (d) => MorningView(d)),
 };
+
+const morningState = { selectedId: null };
+
+function MorningView({ sessions, report, selectedId }) {
+  if (!sessions || sessions.length === 0) {
+    return Card({}, SectionTitle("晨报", "还没有 loop session。"),
+      Empty("用 agent-diff-guard loop start --goal \"...\" 启动一个 session。", "Repeat"));
+  }
+  const picker = h("div", { class: "row", style: { gap: "8px", flexWrap: "wrap" } },
+    ...sessions.map((s) => h("button", {
+      class: "pill " + (s.id === selectedId ? "pill-pass" : ""),
+      onclick: () => { morningState.selectedId = s.id; render(); }
+    }, (s.goal || s.id).slice(0, 40))));
+
+  if (!report) {
+    return F(Card({}, SectionTitle("晨报", "选一个 session"), picker),
+      Empty("无法生成报告。session 可能已损坏或还没有迭代。", "AlertTriangle"));
+  }
+
+  const driftPct = Math.round((report.driftSummary.currentDrift || 0) * 100);
+  const budgetPct = Math.round((report.budgetSummary.budgetPct || 0) * 100);
+  const recCls = report.recommendation === "rollback" ? "pill-wake"
+    : report.recommendation === "review-and-continue" ? "pill-look" : "pill-pass";
+
+  const copyBtn = (text) => h("button", {
+    class: "btn-mini",
+    title: "复制 " + text,
+    onclick: () => { try { navigator.clipboard.writeText(text); } catch {} }
+  }, "复制");
+
+  return F(
+    Card({}, SectionTitle("晨报", "选一个 session"), picker),
+    Card({ class: "danger-intro" },
+      h("div", null,
+        SectionTitle("结论", "agent 一夜跑出来的结果,值不值得继续。"),
+        h("p", { class: "qd-reason", style: { margin: "8px 0 0" } },
+          "迭代 ", h("strong", null, report.iterationsWhileAway), " 轮 · ",
+          "漂移 ", h("strong", { style: { color: driftColor(report.driftSummary.currentDrift) } }, driftPct + "%"),
+          " (", report.driftSummary.status, " · ", report.driftSummary.trend, ") · ",
+          "预算 ", h("strong", null, budgetPct + "%"),
+          report.budgetSummary.estimatedIterationsRemaining != null
+            ? F(" · 约剩 ", h("strong", null, report.budgetSummary.estimatedIterationsRemaining), " 轮") : ""),
+        report.emergencyBrakeTriggered
+          ? h("p", { class: "qd-reason", style: { color: "var(--error)", marginTop: "6px" } }, "⚠ 紧急制动已触发") : ""),
+      h("div", { class: "danger-mcp" },
+        h("span", { class: "ds-label" }, "建议"),
+        h("div", { style: { marginTop: "6px" } }, h("span", { class: "pill " + recCls }, report.recommendation)))),
+
+    Card({}, SectionTitle("漂移原因", "目标关键词没出现在最近改的文件路径里。"),
+      report.driftSummary.reason.missingKeywords.length === 0
+        ? h("p", { class: "qd-reason" }, "全部目标关键词都被覆盖到了。")
+        : h("p", { class: "qd-reason" }, "缺失关键词:",
+            ...report.driftSummary.reason.missingKeywords.map((kw) =>
+              h("span", { class: "pill pill-wake", style: { marginLeft: "6px" } }, kw))),
+      report.driftSummary.reason.recentPathsSample.length > 0
+        ? h("p", { class: "qd-reason mono", style: { marginTop: "8px", fontSize: "12px" } },
+            "最近常改: " + report.driftSummary.reason.recentPathsSample.join(", ")) : ""),
+
+    Card({}, SectionTitle("Top findings", "出现次数最多的命中。"),
+      report.topFindings.length === 0
+        ? Empty("没有 finding。", "Check")
+        : h("table", { class: "tbl" },
+            h("thead", null, h("tr", null,
+              h("th", null, "规则"), h("th", null, "路径"),
+              h("th", null, "等级"), h("th", { class: "num" }, "次数"))),
+            h("tbody", null, ...report.topFindings.map((f) => h("tr", null,
+              h("td", null, f.rule),
+              h("td", { class: "mono" }, f.path),
+              h("td", null, h("span", { class: "pill " + (f.severity === "wake-you-up" ? "pill-wake" : "pill-look") }, f.severity)),
+              h("td", { class: "num mono" }, f.count)))))),
+
+    Card({}, SectionTitle("安全回滚点", "出问题就回到这里 —— 点复制拿到 commit hash。"),
+      report.rollbackCandidates.length === 0
+        ? Empty("还没有 rollback point。让 loop 跑通至少一轮。", "GitBranch")
+        : h("table", { class: "tbl" },
+            h("thead", null, h("tr", null,
+              h("th", { class: "num" }, "iter"),
+              h("th", null, "commit"),
+              h("th", null, "time"),
+              h("th", null, ""))),
+            h("tbody", null, ...report.rollbackCandidates.map((c, i) => h("tr", null,
+              h("td", { class: "num mono" }, c.iteration),
+              h("td", { class: "mono" }, c.commitHash.slice(0, 12)),
+              h("td", { class: "mono" }, fmtTime(c.timestamp)),
+              h("td", null, copyBtn(c.commitHash), i === 0 ? h("span", { class: "pill pill-pass", style: { marginLeft: "6px" } }, "首选") : ""))))))
+  );
+}
+
 
 /* ============================================================
    8. 各页 view
@@ -474,7 +699,27 @@ const DECISION_LABEL = {
   fp: { text: "已标记误报 · 喂给规则校准", cls: "pill-look", icon: "Scale" },
 };
 
-const queueState = { filter: "all", sel: null, reasonFor: null, reason: "", projectId: "", _projects: [] };
+// sel 管「看哪条详情」(单选);picked 管「批量作用对象」(会话内多选,Set of finding id),两者并存。
+// batchReasonOpen:批量放行时弹一次共用理由输入的开关;batchReason:输入内容。
+const queueState = { filter: "all", sel: null, reasonFor: null, reason: "", projectId: "", _projects: [], picked: new Set(), batchReasonOpen: false, batchReason: "" };
+// 移动端(≤640px)队列单列、详情渲染在列表【之下】(屏外);tap 卡片后把详情滚进视口,
+// 否则看着像"点了没反应"。桌面端(详情与列表并排、且 sticky)不触发,避免破坏现有体验。
+function scrollDetailIntoViewOnMobile() {
+  if (!window.matchMedia || !window.matchMedia("(max-width:640px)").matches) return;
+  // PAGES.queue() 同步重渲染后,新的 .q-detail 已在 DOM;setTimeout 0 让浏览器先完成布局再滚。
+  setTimeout(() => {
+    const el = document.querySelector(".q-detail");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 0);
+}
+// 队列内纯 UI 态变化(勾选 / 批量选 / 开关理由框)用这个就地重渲染:直接拿 state.cache.findings
+// 重画 QueueView 写进 #page,不走 loadPage 的 setPage(skeleton)+异步重取 —— 避免每次勾选都闪一帧骨架
+// 屏(那一帧里 .q-item/.q-check 短暂为 0,会被同步探针误判成"勾选后 checkbox 消失")。
+// 数据有变化的路径(decide/批量裁决收尾)仍走 PAGES.queue() 重取,保持与全局刷新一致。
+function rerenderQueue() {
+  if (!state.cache.findings) { PAGES.queue(); return; }
+  setPage(QueueView(state.cache.findings));
+}
 function QueueView(findings) {
   const pending = findings.filter((f) => !state.decisions[f.id]);
   const done = findings.filter((f) => state.decisions[f.id]);
@@ -484,9 +729,10 @@ function QueueView(findings) {
   const current = findings.find((f) => f.id === queueState.sel) || list[0];
 
   const decide = (id, d) => { state.decisions[id] = d; persistDecisions(); state.badges.queue = findings.filter((f) => !state.decisions[f.id]).length; PAGES.queue(); rerenderNavBadges(); };
-  const confirmApprove = (f) => { decide(f.id, { kind: "approved", note: queueState.reason || "未填理由", time: "刚刚" }); queueState.reasonFor = null; queueState.reason = ""; toast("已放行并留痕", "Check"); };
+  const confirmApprove = (f) => { const reason = queueState.reason || "未填理由"; decide(f.id, { kind: "approved", note: reason, time: "刚刚" }); syncDecision(f.id, "approved", reason); queueState.reasonFor = null; queueState.reason = ""; toast("已放行并留痕", "Check"); };
   const reject = async (f) => {
     decide(f.id, { kind: "rejected", note: "已写指令进终端信箱", time: "刚刚" });
+    syncDecision(f.id, "rejected", f.reason || "与任务无关,发回终端修复");
     const body = {
       title: `驳回:撤销 ${f.file} 的改动`,
       action: `git checkout origin/main -- ${f.file}  # 与任务「${truncate(f.task, 40)}」无关,已被守门人驳回`,
@@ -499,18 +745,109 @@ function QueueView(findings) {
     } catch (e) { toast("信箱写入失败:" + e.message, "TriangleAlert"); }
   };
 
+  // ── 批量裁决:picked(Set of id)是作用对象。批量动作逐条复用 syncDecision + 信箱构造,
+  //    与逐条裁决同源,只是不弹逐条 UI。完成后清空 picked、刷 badge、toast。 ──
+  const pickable = list.filter((f) => !state.decisions[f.id]); // 已处理的不参与批量
+  const togglePick = (id) => { queueState.picked.has(id) ? queueState.picked.delete(id) : queueState.picked.add(id); rerenderQueue(); };
+  const pickedFindings = () => findings.filter((f) => queueState.picked.has(f.id) && !state.decisions[f.id]);
+  // 批量放行:共用一个理由,逐条写 decision + syncDecision。
+  const batchApprove = (reason) => {
+    const targets = pickedFindings();
+    const note = reason || "批量放行 · 未填理由";
+    for (const f of targets) { state.decisions[f.id] = { kind: "approved", note, time: "刚刚" }; syncDecision(f.id, "approved", note); }
+    finishBatch(targets.length, "已批量放行 " + targets.length + " 项并留痕", "Check");
+  };
+  // 批量驳回:逐条复用 reject 的信箱 body 构造,每条进信箱。
+  const batchReject = async () => {
+    const targets = pickedFindings();
+    for (const f of targets) {
+      state.decisions[f.id] = { kind: "rejected", note: "已写指令进终端信箱", time: "刚刚" };
+      syncDecision(f.id, "rejected", f.reason || "与任务无关,发回终端修复");
+      const body = {
+        title: `驳回:撤销 ${f.file} 的改动`,
+        action: `git checkout origin/main -- ${f.file}  # 与任务「${truncate(f.task, 40)}」无关,已被守门人驳回`,
+        context: { rules: [f.rule], note: f.reason, urgency: f.level === "wake" ? "high" : "medium", source: "审查队列 · 批量" },
+      };
+      if (queueState.projectId) body.projectId = queueState.projectId;
+      try { await api("/api/inbox/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch {}
+    }
+    finishBatch(targets.length, "已批量驳回 " + targets.length + " 项 · 指令已落终端信箱", "CornerUpLeft");
+  };
+  // 批量标误报:逐条 fp,喂规则校准。
+  const batchFp = () => {
+    const targets = pickedFindings();
+    for (const f of targets) { state.decisions[f.id] = { kind: "fp", note: "进入规则校准语料", time: "刚刚" }; syncDecision(f.id, "fp", "批量标记误报 · 进入规则校准语料"); }
+    finishBatch(targets.length, "已批量标记 " + targets.length + " 项误报", "Scale");
+  };
+  // 收尾:统一 persist + 清 picked + 关理由框 + 刷 badge + 重渲染 + toast。
+  const finishBatch = (n, msg, icon) => {
+    persistDecisions();
+    queueState.picked.clear();
+    queueState.batchReasonOpen = false; queueState.batchReason = "";
+    state.badges.queue = findings.filter((f) => !state.decisions[f.id]).length;
+    PAGES.queue(); rerenderNavBadges();
+    if (n > 0) toast(msg, icon);
+  };
+
+  // 「按组选」:全选当前列表 / 按 commit 选 / 按规则选。只作用于 pickable(未处理项)。
+  const commitGroups = {}; // commit 短hash → 条数
+  for (const f of pickable) { if (f.commit) commitGroups[f.commit] = (commitGroups[f.commit] || 0) + 1; }
+  const ruleGroups = {};
+  for (const f of pickable) { ruleGroups[f.rule] = (ruleGroups[f.rule] || 0) + 1; }
+  const pickAll = () => { for (const f of pickable) queueState.picked.add(f.id); rerenderQueue(); };
+  const clearPick = () => { queueState.picked.clear(); rerenderQueue(); };
+  const pickByCommit = (commit) => { for (const f of pickable) if (f.commit === commit) queueState.picked.add(f.id); rerenderQueue(); };
+  const pickByRule = (rule) => { for (const f of pickable) if (f.rule === rule) queueState.picked.add(f.id); rerenderQueue(); };
+  const ungroupedCount = pickable.filter((f) => !f.commit).length; // commit 为 null 的(history)归"未分组"
+
+  const groupSelect = (label, opts, onPick) => h("select", {
+    class: "inp", style: { width: "auto", minWidth: "130px", fontSize: "12px" },
+    value: "", onChange: (e) => { if (e.target.value !== "") { onPick(e.target.value); e.target.value = ""; } },
+  }, h("option", { value: "" }, label), ...opts);
+
   const head = h("div", { class: "queue-head" },
     h("div", { class: "seg" }, ...[["all", `待裁决 ${counts.all}`], ["wake", `WAKE ${counts.wake}`], ["look", `LOOK ${counts.look}`], ["done", `已处理 ${counts.done}`]].map(([k, label]) =>
       h("button", { class: "seg-btn" + (queueState.filter === k ? " on" : ""), onClick: () => { queueState.filter = k; PAGES.queue(); } }, label))),
-    h("span", { class: "kbd-hint" }, h("kbd", null, "J"), h("kbd", null, "K"), "上下走查"));
+    // 按组选:仅在有可选项时露出(已处理列表 done 下 pickable 为空 → 不显示)。
+    pickable.length > 0 && h("div", { class: "queue-group-sel" },
+      h("button", { class: "seg-btn", onClick: pickAll, title: "全选当前列表所有未处理项" }, `全选 ${pickable.length}`),
+      Object.keys(commitGroups).length > 0 && groupSelect("按 commit 选",
+        Object.entries(commitGroups).map(([c, n]) => h("option", { value: c }, `${c} · ${n} 条`)), pickByCommit),
+      Object.keys(ruleGroups).length > 0 && groupSelect("按规则选",
+        Object.entries(ruleGroups).map(([r, n]) => h("option", { value: r }, `${r} · ${n} 条`)), pickByRule),
+      ungroupedCount > 0 && h("span", { class: "kbd-hint", title: "无 commit 的历史记录不参与按 commit 全选" }, `${ungroupedCount} 条未分组`)),
+    h("span", { class: "kbd-hint" }, h("kbd", null, "J"), h("kbd", null, "K"), "上下走查 · ",
+      h("kbd", null, "A"), "放行 ", h("kbd", null, "R"), "驳回 ", h("kbd", null, "F"), "误报"));
 
   if (list.length === 0) return F(head, Card({}, Empty(queueState.filter === "done" ? "还没有处理过的发现。" : "队列空了 —— 当前没有未提交/未合并的可疑改动。守门人继续安静值守。", "ShieldCheck")));
 
-  return F(head, h("div", { class: "queue-grid" },
+  // sticky 批量动作条:picked 非空时露出。批量放行先弹一次共用理由输入。
+  const pickedCount = pickedFindings().length;
+  const batchBar = pickedCount > 0 && h("div", { class: "batch-bar" },
+    h("span", { class: "batch-count" }, "已选 ", h("b", null, pickedCount), " 项"),
+    queueState.batchReasonOpen
+      ? F(
+          (() => { const inp = h("input", { class: "inp", placeholder: "批量放行理由(共用,留痕;Esc 取消)…", value: queueState.batchReason, onInput: (e) => queueState.batchReason = e.target.value, onKeydown: (e) => { if (e.key === "Enter") batchApprove(queueState.batchReason); else if (e.key === "Escape") { e.preventDefault(); queueState.batchReasonOpen = false; rerenderQueue(); } } }); setTimeout(() => inp.focus(), 0); return inp; })(),
+          Btn("确认放行", { small: true, icon: "Check", onClick: () => batchApprove(queueState.batchReason) }),
+          Btn("取消", { small: true, kind: "quiet", onClick: () => { queueState.batchReasonOpen = false; rerenderQueue(); } }))
+      : F(
+          Btn("批量放行", { small: true, icon: "Check", kind: "ghost", onClick: () => { queueState.batchReasonOpen = true; rerenderQueue(); } }),
+          Btn("批量驳回 · 发回终端", { small: true, icon: "CornerUpLeft", onClick: batchReject }),
+          Btn("批量标误报", { small: true, icon: "Scale", kind: "quiet", onClick: batchFp }),
+          Btn("清空选择", { small: true, kind: "quiet", onClick: clearPick })));
+
+  return F(head, batchBar, h("div", { class: "queue-grid" },
     h("div", { class: "queue-list" }, ...list.map((f) => {
       const d = state.decisions[f.id];
-      return Card({ class: "q-item" + (current && current.id === f.id ? " q-on" : ""), onClick: () => { queueState.sel = f.id; PAGES.queue(); } },
-        h("div", { class: "q-item-top" }, h("span", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, LevelPill(f.level), OriginBadge(f.origin)), h("span", { class: "mono q-age" }, ago(f.timestamp))),
+      const picked = queueState.picked.has(f.id);
+      const selectItem = () => { queueState.sel = f.id; PAGES.queue(); scrollDetailIntoViewOnMobile(); };
+      return Card({ class: "q-item" + (current && current.id === f.id ? " q-on" : "") + (picked ? " q-picked" : ""), role: "button", tabindex: "0", "aria-label": "查看 " + f.file + " 的详情", onClick: selectItem, onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectItem(); } } },
+        h("div", { class: "q-item-top" },
+          h("span", { style: { display: "inline-flex", gap: "8px", alignItems: "center" } },
+            // checkbox:stopPropagation 防触发选中详情;已处理项不可勾。
+            !d && h("input", { type: "checkbox", class: "q-check", checked: picked, title: "加入批量裁决", onClick: (e) => { e.stopPropagation(); togglePick(f.id); } }),
+            LevelPill(f.level), OriginBadge(f.origin)),
+          h("span", { class: "mono q-age" }, ago(f.timestamp))),
         h("div", { class: "q-file mono" }, f.file),
         h("div", { class: "q-meta" }, Chip(f.rule), h("span", { class: "q-repo" }, f.repo)),
         d && h("div", { class: "q-done" }, Icon(DECISION_LABEL[d.kind].icon, 12), DECISION_LABEL[d.kind].text));
@@ -522,22 +859,34 @@ function QueueDetail(c, { confirmApprove, reject }) {
   const rangeLabel = c.origin === "history" ? "历史记录" : c.origin === "demo" ? "演示数据" : "git diff";
   return Card({ class: "q-detail" },
     h("div", { class: "qd-head" },
-      h("div", null, h("div", { class: "qd-file mono" }, c.file),
-        h("div", { class: "qd-meta" }, LevelPill(c.level), OriginBadge(c.origin), Chip(c.rule), h("span", { class: "mono" }, c.repo + (c.branch ? " · " + c.branch : "")))),
-      h("div", { class: "qd-agent" }, h("span", { class: "ds-label" }, "来源"), h("div", { class: "mono", style: { fontSize: "12px" } }, rangeLabel))),
-    c.task && h("div", { class: "qd-block" }, h("span", { class: "ds-label" }, "声称的任务"), h("div", { class: "qd-task" }, "「" + truncate(c.task, 160) + "」")),
+      h("div", null,
+        h("div", { class: "qd-file mono" }, c.file, c.disposable ? DisposableBadge(c.disposable) : false),
+        h("div", { class: "qd-meta" }, LevelPill(c.level), OriginBadge(c.origin), Chip(c.rule),
+          h("span", { class: "mono" }, c.repo + (c.branch ? " · " + c.branch : "") + (c.commit ? " @" + c.commit : "")))),
+      h("div", { class: "qd-agent" },
+        h("span", { class: "ds-label" }, "来源"),
+        h("div", { class: "mono", style: { fontSize: "12px" } }, rangeLabel),
+        c.agent ? h("div", { class: "mono", style: { fontSize: "11px", opacity: "0.7", marginTop: "2px" } }, c.agent) : false)),
+    c.task && h("div", { class: "qd-block" },
+      h("span", { class: "ds-label" }, "声称的任务",
+        c.origin === "live" ? h("span", { class: "qd-task-src", title: "实时取自本机 agent 会话,仅用于本机判断偏离;不写入 events.jsonl 审计,不上报" }, " · 实时读取 · 不入审计") : false),
+      h("div", { class: "qd-task" }, "「" + truncate(c.task, 160) + "」")),
     c.drift != null && h("div", { class: "qd-block" }, h("div", { class: "qd-drift-row" }, h("span", { class: "ds-label" }, "任务 ↔ 改动偏离度"), DriftMeter(c.drift))),
     h("div", { class: "qd-block" }, h("span", { class: "ds-label" }, "守门人为什么拦"), h("p", { class: "qd-reason" }, c.reason)),
     h("div", { class: "qd-block" },
-      h("div", { class: "qd-diff-head" }, h("span", { class: "ds-label" }, c.origin === "live" ? "改动片段 · 实时取自本机 git" : c.origin === "demo" ? "改动片段 · 演示" : "改动片段"),
+      h("div", { class: "qd-diff-head" },
+        h("span", { class: "ds-label" },
+          c.origin === "live" ? "改动片段 · 实时取自本机 git" : c.origin === "demo" ? "改动片段 · 演示" : "改动片段",
+          // 行级归因提示:让评审知道高亮的新增行就是这个 agent 写的(聚焦 AI 写的行)。
+          c.origin !== "history" && c.agent ? h("span", { class: "ai-attrib", title: "新增行(绿色)由该 agent 写入 —— 聚焦审查 AI 写的行" }, " · 绿行 = " + c.agent + " 写入") : false),
         c.origin !== "history" && h("span", { class: "mono" }, h("span", { class: "t-add" }, "+" + c.stats.add), " ", h("span", { class: "t-del" }, "−" + c.stats.del))),
       c.origin === "history"
         ? h("div", { class: "q-no-diff" }, "这是一条历史被刹住的记录。隐私铁律下,events.jsonl 只留命中元数据(规则 / 路径 / 级别 / 理由),不留 diff 正文 —— 所以无法在此重放代码。要看正文,请在终端对该改动重新跑 ", h("span", { class: "mono" }, "agent-diff-guard check"), "。")
-        : DiffBlock(c.diff)),
+        : DiffBlock(c.diff, c.agent)),
     d ? h("div", { class: "qd-decided" }, Icon(DECISION_LABEL[d.kind].icon, 14), h("span", null, DECISION_LABEL[d.kind].text), h("span", { class: "mono" }, "· " + d.time + " · " + d.note))
       : queueState.reasonFor === c.id
         ? h("div", { class: "qd-approve" },
-            (() => { const inp = h("input", { class: "inp", placeholder: "放行理由(留痕,团队可见)…", value: queueState.reason, onInput: (e) => queueState.reason = e.target.value, onKeydown: (e) => { if (e.key === "Enter") confirmApprove(c); } }); setTimeout(() => inp.focus(), 0); return inp; })(),
+            (() => { const inp = h("input", { class: "inp", placeholder: "放行理由(留痕,团队可见;Esc 取消)…", value: queueState.reason, onInput: (e) => queueState.reason = e.target.value, onKeydown: (e) => { if (e.key === "Enter") confirmApprove(c); else if (e.key === "Escape") { e.preventDefault(); queueState.reasonFor = null; PAGES.queue(); } } }); setTimeout(() => inp.focus(), 0); return inp; })(),
             Btn("确认放行", { small: true, icon: "Check", onClick: () => confirmApprove(c) }),
             Btn("取消", { small: true, kind: "quiet", onClick: () => { queueState.reasonFor = null; PAGES.queue(); } }))
         : h("div", { class: "qd-actions" },
@@ -546,13 +895,41 @@ function QueueDetail(c, { confirmApprove, reject }) {
               ...queueState._projects.map((p) => h("option", { value: p.id }, (p.favorite ? "★ " : "") + p.name))),
             Btn("放行", { icon: "Check", kind: "ghost", onClick: () => { queueState.reasonFor = c.id; PAGES.queue(); } }),
             Btn("驳回 · 发回终端修复", { icon: "CornerUpLeft", onClick: () => reject(c) }),
-            Btn("标记误报", { icon: "Scale", kind: "quiet", onClick: () => { state.decisions[c.id] = { kind: "fp", note: "进入规则校准语料", time: "刚刚" }; persistDecisions(); PAGES.queue(); rerenderNavBadges(); toast("已标记误报", "Scale"); } })));
+            Btn("标记误报", { icon: "Scale", kind: "quiet", onClick: () => { state.decisions[c.id] = { kind: "fp", note: "进入规则校准语料", time: "刚刚" }; persistDecisions(); syncDecision(c.id, "fp", "标记误报 · 进入规则校准语料"); PAGES.queue(); rerenderNavBadges(); toast("已标记误报", "Scale"); } })));
 }
 
 const auditState = { disp: "all" };
 const auditOpen = new Set();
 const DISP_PILL = { blocked: ["被刹住", "pill-wake"], "human-approved": ["人工放行", "pill-look"], "auto-pass": ["自动放行", "pill-pass"] };
-function AuditView(rows) {
+// 裁决 key 是 ${repo}:${range}:${rule}:${path},审计行 id 是 ULID —— 两个 id 空间永不相等,
+// 直接 decisions[r.id] 恒 miss(证据包 humanDecision 永远 null)。两者唯一稳定共有的维度是
+// rule + path:按 "rule path" 尾部重建索引,让审计行的每条命中能关联到它的人工裁决。
+function repoTail(s) { return (s || "").split("/").filter(Boolean).slice(-2).join("/"); }
+function indexDecisionsByRulePath(decisions) {
+  const idx = {};
+  for (const key of Object.keys(decisions || {})) {
+    // key = repo:range:rule:path. MUST include repo, else two repos with same rule+path
+    // would cross-link. repo has "/"; parts[2] is rule(no colon); parts[3..] rejoined is path.
+    const parts = key.split(":");
+    if (parts.length < 4) continue;
+    const repo = repoTail(parts[0]);
+    const rule = parts[2];
+    const path = parts.slice(3).join(":");
+    idx[repo + "|" + rule + "|" + path] = decisions[key];
+  }
+  return idx;
+}
+function decisionForRow(r, idx) {
+  // audit row repo from repoRemote/repoAlias tail, aligned with decision key repo segment.
+  const repo = repoTail(r.repoRemote || r.repoAlias || "");
+  for (const f of r.findings || []) {
+    const hit = idx[repo + "|" + f.rule + "|" + f.path];
+    if (hit) return hit;
+  }
+  return null;
+}
+function AuditView(rows, decisions = {}) {
+  const decisionIdx = indexDecisionsByRulePath(decisions);
   const list = rows.filter((r) => auditState.disp === "all" || r.disposition === auditState.disp);
   const toggle = (id) => { auditOpen.has(id) ? auditOpen.delete(id) : auditOpen.add(id); PAGES.audit(); };
   return F(
@@ -566,25 +943,79 @@ function AuditView(rows) {
         h("tbody", null, ...list.flatMap((r) => {
           const [text, cls] = DISP_PILL[r.disposition] || [r.disposition, ""];
           const open = auditOpen.has(r.id);
-          const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), onClick: () => toggle(r.id) },
+          const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), role: "button", tabindex: "0", "aria-expanded": open ? "true" : "false", onClick: () => toggle(r.id), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(r.id); } } },
             h("td", null, h("span", { class: "row-caret" }, Icon("ArrowRight", 12)), h("span", { class: "mono" }, fmtTime(r.timestamp))),
             h("td", null, h("span", { class: "mono" }, r.gitRange)),
             h("td", { class: "num" + (r.wakeCount > 0 ? " t-del" : "") }, r.wakeCount),
             h("td", null, h("div", { class: "t-rules" }, r.rulesTriggered.length ? r.rulesTriggered.map((x) => Chip(x)) : h("span", { class: "t-dim" }, "—"))),
             h("td", null, h("span", { class: "pill " + cls }, text)));
           if (!open) return [row];
-          return [row, h("tr", null, h("td", { class: "detail-cell", colspan: 5 }, AuditDetail(r)))];
+          return [row, h("tr", null, h("td", { class: "detail-cell", colspan: 5 }, AuditDetail(r, decisionForRow(r, decisionIdx))))];
         })))));
 }
-function AuditDetail(r) {
+// 导出单条守门记录的证据包(纯前端 Blob 下载)。
+// 隐私铁律:只导元数据(时间/范围/commit/命中规则/处置/理由),绝不含 diff 正文。
+// findings 仅保留 rule/severity/path/whySummary —— 与面板展示同源,无代码行。
+function exportEvidence(r, decision) {
+  const bundle = {
+    _meta: {
+      kind: "agent-diff-guard-evidence",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      note: "隐私铁律:本证据包只含守门元数据,不含 diff 正文 / task 原文 / 代码行。",
+    },
+    id: r.id,
+    timestamp: r.timestamp,
+    repoRemote: r.repoRemote || null,
+    repoAlias: r.repoAlias || null,
+    gitRange: r.gitRange,
+    commitHash: r.commitHash || null,
+    disposition: r.disposition,
+    wakeCount: r.wakeCount,
+    lookCount: r.lookCount,
+    totalFilesChanged: r.totalFilesChanged,
+    rulesTriggered: r.rulesTriggered || [],
+    taskDescLen: r.taskDescLen ?? null,
+    findings: (r.findings || []).map((f) => ({ rule: f.rule, severity: f.severity, path: f.path, whySummary: f.whySummary })),
+    humanDecision: decision
+      ? { disposition: decision.disposition, reason: decision.reason || "", timestamp: decision.timestamp }
+      : null,
+  };
+  try {
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: `evidence-${r.id}.json` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("证据包已导出(仅元数据)", "Download");
+  } catch (e) {
+    toast("导出失败:" + e.message, "TriangleAlert");
+  }
+}
+function AuditDetail(r, decision) {
   return h("div", { class: "detail-box" },
     h("div", { class: "detail-grid" },
       h("span", { class: "detail-k" }, "仓库"), h("span", { class: "detail-v mono" }, r.repoRemote || "(本地仓库)"),
       h("span", { class: "detail-k" }, "git 范围"), h("span", { class: "detail-v mono" }, r.gitRange),
+      // commit SHA:扫描当时落盘的 short hash;老事件没有 → "—"。可复制做回滚锚点。
+      h("span", { class: "detail-k" }, "commit"),
+      h("span", { class: "detail-v mono" }, r.commitHash
+        ? F(r.commitHash, " ", h("button", { class: "btn-mini", title: "复制 " + r.commitHash, onclick: () => { try { navigator.clipboard.writeText(r.commitHash); toast("已复制 commit", "Copy"); } catch {} } }, "复制"))
+        : "—"),
       h("span", { class: "detail-k" }, "改动文件"), h("span", { class: "detail-v" }, F(h("b", null, r.totalFilesChanged), " 个 · ",
         h("span", { class: "t-del" }, r.wakeCount + " wake"), " / ", h("span", { class: "t-by", style: { display: "inline", color: "var(--warning)" } }, r.lookCount + " look"))),
       r.taskDescLen != null && h("span", { class: "detail-k" }, "声称任务"),
-      r.taskDescLen != null && h("span", { class: "detail-v" }, `${r.taskDescLen} 字(原文已 hash,不留存 —— 隐私铁律)`)),
+      r.taskDescLen != null && h("span", { class: "detail-v", title: "审计层(events.jsonl)只存 task 长度 + sha256,原文 hash 后即丢弃、绝不上报。注:本机 loop 会话为驱动执行会留目标原文,但仅在本机、永不出区。" }, `${r.taskDescLen} 字 · 审计层仅存 hash(原文不入审计)`)),
+    // 人工裁决理由:来自本机 decisions.jsonl(证据链)。有则展示处置 + 理由 + 时间。
+    decision && h("div", { class: "qd-decided", style: { marginTop: "12px" } },
+      Icon((DECISION_LABEL[decision.disposition] || {}).icon || "Scale", 14),
+      h("span", null, (DECISION_LABEL[decision.disposition] || {}).text || decision.disposition),
+      h("span", { class: "mono" }, "· " + fmtTime(decision.timestamp) + " · " + (decision.reason || "未填理由"))),
+    // 导出证据包:纯前端 Blob 下载,只含元数据(隐私铁律:绝不含 diff 正文)。
+    h("div", { style: { marginTop: "12px" } },
+      Btn("导出证据包", { small: true, kind: "ghost", icon: "Download", onClick: () => exportEvidence(r, decision) })),
     r.findings && r.findings.length
       ? h("div", { style: { marginTop: "12px" } },
           h("span", { class: "ds-label", style: { display: "block", marginBottom: "8px" } }, "逐条命中"),
@@ -601,8 +1032,21 @@ function ruleLevel(r) {
   if (r.wakeCount >= r.count) return ["wake", "WAKE-YOU-UP", "lvl-wake"];
   return ["mixed", "混合", "lvl-mixed"];
 }
-function RulesView(rules, findings) {
+// 规则治理:把面板上的禁用/降级写回服务端 overrides,再重渲染。best-effort 不阻塞 UI。
+function setRuleOverride(rule, action) {
+  api("/api/rules/overrides", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rule, action }),
+  }).then(() => {
+    state.cache.ruleOverrides = null; // 失效缓存(若有),强制下次重取
+    PAGES.rules();
+    toast(action === "disable" ? "已停用该规则" : action === "downgrade" ? "已降为 look-once" : "已恢复默认", "SlidersHorizontal");
+  }).catch((e) => toast("治理写入失败:" + e.message, "TriangleAlert"));
+}
+function RulesView(rules, findings, overrides = { overrides: {} }) {
   if (!rules.length) return Card({}, Empty("还没有规则命中记录 —— 跑过几次 `agent-diff-guard check` 后这里会有数据。", "SlidersHorizontal"));
+  const ov = (overrides && overrides.overrides) || {};
   const max = Math.max(...rules.map((x) => x.count));
   // 误报率:本地"标记误报(fp)"的裁决,按规则归集 / 该规则在队列里出现过的总数。
   // 这是用户实际反馈的误报信号(localStorage),目前是面板内闭环;团队版会回流到规则校准。
@@ -614,24 +1058,40 @@ function RulesView(rules, findings) {
   const totalFp = Object.values(fpByRule).reduce((a, b) => a + b, 0);
   return Card({}, SectionTitle("守门规则", "命中、级别与误报 —— 误报是头号死因,被标记越多越该校准。"),
     h("table", { class: "tbl" },
-      h("thead", null, h("tr", null, h("th", null, "规则"), h("th", null, "级别"), h("th", { class: "num" }, "命中"), h("th", { class: "num" }, "其中 wake"), h("th", { class: "num" }, "标记误报"), h("th", { style: { width: "24%" } }, "命中占比"))),
+      h("thead", null, h("tr", null, h("th", null, "规则"), h("th", null, "级别"), h("th", { class: "num" }, "命中"), h("th", { class: "num" }, "其中 wake"), h("th", { class: "num" }, "标记误报"), h("th", { style: { width: "18%" } }, "命中占比"), h("th", { style: { width: "16%" } }, "治理"))),
       h("tbody", null, ...rules.map((r) => {
         const [, lvlText, lvlCls] = ruleLevel(r);
         const fp = fpByRule[r.rule] || 0;
         const seen = seenByRule[r.rule] || 0;
         const fpRate = seen > 0 ? Math.round((fp / seen) * 100) : null;
+        const action = (ov[r.rule] && ov[r.rule].action) || ""; // "" 正常 | "downgrade" | "disable"
+        const suggest = fpRate != null && fpRate > 40 && !action; // 误报率>40% 且未治理 → 建议降级
         return h("tr", null,
-          h("td", null, h("div", { class: "r-name" }, Chip(r.rule))),
+          h("td", null, h("div", { class: "r-name" }, Chip(r.rule),
+            action === "disable" ? h("span", { class: "pill pill-look", style: { marginLeft: "6px" }, title: "该规则已停用,不再产生命中" }, "已停用") : false,
+            action === "downgrade" ? h("span", { class: "pill pill-look", style: { marginLeft: "6px" }, title: "该规则已降为 look-once,不再 wake-you-up" }, "已降级") : false)),
           h("td", null, h("span", { class: "lvl-tag " + lvlCls }, lvlText)),
           h("td", { class: "num" }, h("span", { class: "mono" }, r.count)),
           h("td", { class: "num" }, h("span", { class: "mono" + (r.wakeCount ? " t-del" : "") }, r.wakeCount)),
           h("td", { class: "num" }, fp > 0 ? h("span", { class: "mono t-del", title: fpRate != null ? `误报率 ${fpRate}%` : "" }, fp + (fpRate != null ? ` · ${fpRate}%` : "")) : h("span", { class: "t-dim mono" }, "0")),
-          h("td", null, h("span", { class: "bar", style: { width: Math.max(8, (r.count / max) * 100) + "%" } })));
+          h("td", null, h("span", { class: "bar", style: { width: Math.max(8, (r.count / max) * 100) + "%" } })),
+          h("td", null,
+            h("select", {
+              class: "inp" + (suggest ? " rule-gov-suggest" : ""),
+              style: { width: "auto", minWidth: "120px", fontSize: "12px" },
+              title: suggest ? "误报率偏高,建议降级 —— 但仍由你裁决" : "",
+              value: action,
+              onChange: (e) => setRuleOverride(r.rule, e.target.value === "" ? null : e.target.value),
+            },
+              h("option", { value: "" }, "正常"),
+              h("option", { value: "downgrade" }, "降为 look-once"),
+              h("option", { value: "disable" }, "停用")),
+            suggest ? h("div", { class: "rule-gov-hint", title: `误报率 ${fpRate}%`, style: { fontSize: "11px", color: "var(--warning)", marginTop: "3px" } }, "建议降级") : false));
       }))),
     h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "12px" } },
       totalFp > 0
-        ? F("你已在审查队列标记 ", h("b", null, totalFp), " 处误报。误报率 = 该规则被标误报数 / 该规则在队列出现数 —— 持续偏高的规则应当降级或收窄,否则会被当成狼来了关掉。")
-        : "误报率来自你在审查队列点「标记误报」的反馈,目前为 0。一旦开始标记,这里会显示每条规则的误报压力 —— 这是规则该不该降级的第一手依据。"),
+        ? F("你已在审查队列标记 ", h("b", null, totalFp), " 处误报。误报率 = 该规则被标误报数 / 该规则在队列出现数 —— 误报率 > 40% 的规则会在「治理」列标注「建议降级」,可直接在那一列降为 look-once 或停用(由你裁决,守门人不自动降级)。")
+        : "误报率来自你在审查队列点「标记误报」的反馈,目前为 0。一旦开始标记,这里会显示每条规则的误报压力,并在「治理」列给出降级建议 —— 这是规则该不该降级的第一手依据。"),
     h("p", { class: "foot-note", style: { textAlign: "left", marginTop: "8px" } },
       "如何添加规则:守门规则定义在 ", h("span", { class: "mono" }, "src/rules.ts"),
       " 的 SENSITIVE_PATH_RULES 表(路径级)与 contentFindings(内容级);每条带 severity:wake-you-up 或 look-once。"));
@@ -700,7 +1160,7 @@ function DangerView(map) {
           h("tbody", null, ...r.zones.flatMap((z) => {
             const key = `${r.repo}:${z.rule}`;
             const open = dangerOpen.has(key);
-            const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), onClick: () => toggle(key) },
+            const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), role: "button", tabindex: "0", "aria-expanded": open ? "true" : "false", onClick: () => toggle(key), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(key); } } },
               h("td", null, h("span", { class: "row-caret" }, Icon("ArrowRight", 12)), h("span", { class: "mono z-path" }, z.path)),
               h("td", null, Chip(z.rule)),
               h("td", null, HeatDot(z.heat), h("span", { class: "mono", style: { marginLeft: "6px", fontSize: "10px", color: "var(--fg-subtle)" } }, HEAT_LABEL[z.heat] || "")),
@@ -710,6 +1170,9 @@ function DangerView(map) {
             return [row, h("tr", null, h("td", { class: "detail-cell", colspan: 5 }, DangerDetail(z)))];
           })),
         ),
+        // 移动端提示:表格(877px)宽于窄屏视口、靠横向滚动看热度/历史命中/备注等核心列。
+        // CSS 只在 ≤640px 显示这条,桌面端不出现。
+        h("div", { class: "tbl-scroll-hint" }, "← 左右滑动查看热度 / 历史命中 / 备注 →"),
         // 热度图例
         h("div", { class: "heat-legend" },
           h("span", { class: "ds-label", style: { letterSpacing: ".8px" } }, "热度"),
@@ -892,6 +1355,14 @@ function renderCardBlob(day, isToday, trend, nowText) {
 async function shareUsageCard(day, isToday, trend, nowText, btn) {
   const label = btn ? btn.querySelector("span:last-child") || btn : null;
   const restore = btn ? btn.textContent : "";
+  // 降级:把图片做成下载。无论是剪贴板 API 缺失,还是 write() 被权限/非安全上下文拒绝,都走这里 —— 绝不静默失败。
+  const downloadBlob = (blob) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `adg-usage-${isToday ? localDateStr() : day.date}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
   try {
     const blob = await renderCardBlob(day, isToday, trend, nowText);
     // 优先:复制到剪贴板(可直接粘进聊天/文档)
@@ -899,16 +1370,16 @@ async function shareUsageCard(day, isToday, trend, nowText, btn) {
       try {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
         toast("已复制为图片,可直接粘贴", "Copy");
-        return;
-      } catch { /* 剪贴板被拒 → 降级下载 */ }
+      } catch {
+        // 剪贴板被拒(权限/非安全上下文/非聚焦)→ 在此显式降级下载,并给反馈,不吞错。
+        downloadBlob(blob);
+        toast("剪贴板被拒,已改为下载图片", "ArrowRight");
+      }
+    } else {
+      // 浏览器无 ClipboardItem → 直接下载。
+      downloadBlob(blob);
+      toast("剪贴板不可用,已下载图片", "ArrowRight");
     }
-    // 降级:触发下载
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `adg-usage-${isToday ? localDateStr() : day.date}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast("剪贴板不可用,已下载图片", "ArrowRight");
   } catch (e) {
     toast("生成图片失败:" + e.message, "TriangleAlert");
   }
@@ -961,7 +1432,7 @@ function UsageView({ today, daily, projects, sessions, ov }) {
           h("thead", null, h("tr", null, h("th", null, "日期"), h("th", { class: "num" }, "活跃"), h("th", { class: "num" }, "token"), h("th", { class: "num" }, "工具"), h("th", { class: "num" }, "估算"))),
           h("tbody", null, ...daily.slice(0, 10).map((d, i) => {
             const isSelRow = usageState.selDate ? d.date === usageState.selDate : i === 0; // 未选高亮最近(今天)
-            return h("tr", { class: "row-click" + (isSelRow ? " row-open" : ""), onClick: () => pick(i === 0 ? null : d.date) },
+            return h("tr", { class: "row-click" + (isSelRow ? " row-open" : ""), role: "button", tabindex: "0", "aria-pressed": isSelRow ? "true" : "false", onClick: () => pick(i === 0 ? null : d.date), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(i === 0 ? null : d.date); } } },
               h("td", null, h("span", { class: "mono" }, d.date)),
               h("td", { class: "num" }, fmtDur(d.activeMs)),
               h("td", { class: "num" }, h("span", { class: "mono" }, fmtK(d.tokens.total))),
@@ -1202,7 +1673,7 @@ function RunlogView(data) {
             h("tbody", null, ...list.flatMap((it) => {
               const [label, cls] = PHASE_PILL[it.phase] || ["—", ""];
               const open = runlogOpen.has(it.id);
-              const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), onClick: () => toggle(it.id) },
+              const row = h("tr", { class: "row-click" + (open ? " row-open" : ""), role: "button", tabindex: "0", "aria-expanded": open ? "true" : "false", onClick: () => toggle(it.id), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(it.id); } } },
                 h("td", null, h("span", { class: "row-caret" }, Icon("ArrowRight", 12)), h("span", { class: "mono" }, fmtTime(it.time))),
                 h("td", null, it.title ? (it.title.length > 50 ? it.title.slice(0, 50) + "…" : it.title) : h("span", { class: "t-dim" }, "—")),
                 h("td", null, Chip(it.kind || "—")),
@@ -1362,7 +1833,9 @@ function renderOverlays() {
   root.appendChild(F(
     ai.palOpen && CommandPalette(),
     ai.askOpen && AskGuard(),
-    !ai.askOpen && ai.nudgeShown && !ai.nudgeDismissed && !nudgeDismissedFor(pendingWakeCount()) && CompanionNudge(),
+    // 提醒卡只在非队列页探出。它的作用是把人引到审查队列;一旦人已在队列页,
+    // 它就和右下角 sticky 裁决动作区(放行/驳回)几何重叠、拦掉点击 —— 此时隐藏让位。
+    state.route !== "queue" && !ai.askOpen && ai.nudgeShown && !ai.nudgeDismissed && !nudgeDismissedFor(pendingWakeCount()) && CompanionNudge(),
     CompanionOrb(),
   ));
 }
@@ -1730,13 +2203,52 @@ function scheduleNudge() {
 /* ============================================================
    9b. 键盘走查(j/k)
    ============================================================ */
+// 队列裁决:a=放行(开理由框) r=驳回·发回终端 f=标误报。逻辑与详情面板 onClick 同源,
+// 这里直接复用模块级 persistDecisions/syncDecision/PAGES/rerenderNavBadges/toast,不另起一套。
+function kbReject(f) {
+  state.decisions[f.id] = { kind: "rejected", note: "已写指令进终端信箱", time: "刚刚" };
+  persistDecisions();
+  state.badges.queue = (state.cache.findings || []).filter((x) => !state.decisions[x.id]).length;
+  syncDecision(f.id, "rejected", f.reason || "与任务无关,发回终端修复");
+  const body = {
+    title: `驳回:撤销 ${f.file} 的改动`,
+    action: `git checkout origin/main -- ${f.file}  # 与任务「${truncate(f.task, 40)}」无关,已被守门人驳回`,
+    context: { rules: [f.rule], note: f.reason, urgency: f.level === "wake" ? "high" : "medium", source: "审查队列 · 快捷键" },
+  };
+  if (queueState.projectId) body.projectId = queueState.projectId;
+  api("/api/inbox/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(() => toast("已驳回 · 指令已落终端信箱", "CornerUpLeft"))
+    .catch((err) => toast("信箱写入失败:" + err.message, "TriangleAlert"));
+  PAGES.queue(); rerenderNavBadges();
+}
+function kbFalsePositive(f) {
+  state.decisions[f.id] = { kind: "fp", note: "进入规则校准语料", time: "刚刚" };
+  persistDecisions();
+  state.badges.queue = (state.cache.findings || []).filter((x) => !state.decisions[x.id]).length;
+  syncDecision(f.id, "fp", "标记误报 · 进入规则校准语料");
+  PAGES.queue(); rerenderNavBadges(); toast("已标记误报", "Scale");
+}
 window.addEventListener("keydown", (e) => {
   if (state.route !== "queue") return;
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-  if (e.key !== "j" && e.key !== "k") return;
+  // 焦点在输入控件里(打字)时不抢键,避免误触发裁决/走查
+  const ae = document.activeElement;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   const findings = state.cache.findings || [];
   const pending = findings.filter((f) => !state.decisions[f.id]);
   const list = queueState.filter === "all" ? pending : queueState.filter === "done" ? findings.filter((f) => state.decisions[f.id]) : pending.filter((f) => f.level === queueState.filter);
+  // 裁决快捷键作用于当前选中且未处理的项
+  if (e.key === "a" || e.key === "r" || e.key === "f") {
+    const current = findings.find((f) => f.id === queueState.sel);
+    if (!current || state.decisions[current.id]) return; // 没选中 / 已处理 → no-op
+    e.preventDefault();
+    if (e.key === "a") { queueState.reasonFor = current.id; PAGES.queue(); } // 放行:开理由框,复用现有流程
+    else if (e.key === "r") kbReject(current);
+    else kbFalsePositive(current);
+    return;
+  }
+  if (e.key !== "j" && e.key !== "k") return;
   const ids = list.map((f) => f.id);
   const i = ids.indexOf(queueState.sel);
   const next = e.key === "j" ? Math.min(ids.length - 1, i + 1) : Math.max(0, i - 1);

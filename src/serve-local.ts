@@ -23,11 +23,14 @@ import { buildAllInsights } from "./insights";
 import { loadPolicy } from "./policy";
 import { detectViolations, summarizeViolations, type Violation } from "./violations";
 import { writeDecision, listPending, listDone } from "./inbox";
+import { appendDecision, latestDecisionsById, isDecisionKind } from "./decisions";
+import { readOverrides, setOverride, isOverrideAction } from "./rule-overrides";
 import { listProjects, createProject, updateProject, deleteProject, type PermissionMode } from "./projects";
 import { listRuns, listBlocked } from "./runlog";
 import { buildQueue } from "./findings";
 import { repoHistory, staticZones } from "./context";
-import { listSessions } from "./loop/session";
+import { listSessions, loadSession } from "./loop/session";
+import { generateReport } from "./loop/report";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -353,6 +356,51 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
+  // ── 裁决理由 API:人工放行/驳回/误报的"为什么"落本机 decisions.jsonl(证据链) ──
+  // GET 回 { targetId → 最新裁决 },面板审计详情据此回显理由。
+  if (path === "/api/decisions" && req.method === "GET") {
+    return jsonResponse(latestDecisionsById());
+  }
+  // POST 写一条裁决。隐私铁律:只存命中 id / 处置 / 理由文字 / 时间,不碰 diff 正文。
+  if (path === "/api/decisions" && req.method === "POST") {
+    const body = await readJsonBody<{ targetId?: string; disposition?: string; reason?: string }>(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!body.targetId || typeof body.targetId !== "string") {
+      return new Response(JSON.stringify({ ok: false, reason: "缺少 targetId(命中/事件 id)" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!isDecisionKind(body.disposition)) {
+      return new Response(JSON.stringify({ ok: false, reason: "disposition 必须是 approved/rejected/fp" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const record = appendDecision({
+      targetId: body.targetId,
+      disposition: body.disposition,
+      reason: typeof body.reason === "string" ? body.reason : "",
+    });
+    return jsonResponse({ ok: true, record });
+  }
+
+  // ── 规则治理 API:让用户在面板上禁用/降级规则,补"标记误报→校准"的断链 ──
+  if (path === "/api/rules/overrides" && req.method === "GET") {
+    return jsonResponse(readOverrides());
+  }
+  // POST 设一条覆盖:{ rule, action: "disable"|"downgrade"|null }(null=清除,恢复默认)。
+  if (path === "/api/rules/overrides" && req.method === "POST") {
+    const body = await readJsonBody<{ rule?: string; action?: string | null }>(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ ok: false, reason: "请求体不是合法 JSON" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (!body.rule || typeof body.rule !== "string") {
+      return new Response(JSON.stringify({ ok: false, reason: "缺少 rule(规则名)" }), { status: 400, headers: JSON_HEADERS });
+    }
+    if (body.action !== null && !isOverrideAction(body.action)) {
+      return new Response(JSON.stringify({ ok: false, reason: "action 必须是 disable/downgrade/null" }), { status: 400, headers: JSON_HEADERS });
+    }
+    const next = setOverride(body.rule, body.action ?? null);
+    return jsonResponse({ ok: true, overrides: next });
+  }
+
   // ── 信箱写入 API:把面板上的用户决策写成指令,等终端 Claude Code 来取 ──
   if (path === "/api/inbox/decision" && req.method === "POST") {
     const body = await readJsonBody<{ title?: string; action?: string; projectId?: string; context?: Record<string, unknown> }>(req);
@@ -506,17 +554,39 @@ async function handle(req: Request): Promise<Response> {
     return jsonResponse(snapshots);
   }
 
+  // ── 晨报:单 session 的 MorningReport ──
+  if (path === "/api/loop/report") {
+    const sessionId = url.searchParams.get("session");
+    if (!sessionId) {
+      return new Response(
+        JSON.stringify({ ok: false, reason: "missing 'session' query param" }),
+        { status: 400, headers: JSON_HEADERS },
+      );
+    }
+    const session = loadSession(sessionId);
+    if (!session) {
+      return new Response(
+        JSON.stringify({ ok: false, reason: `session ${sessionId} not found` }),
+        { status: 404, headers: JSON_HEADERS },
+      );
+    }
+    const since = url.searchParams.get("since") ?? undefined;
+    return jsonResponse(generateReport(session, since ? { since } : undefined));
+  }
+
   // ── 静态面板 ──
   if (path === "/" || path === "/index.html") {
     const f = Bun.file(join(webDir(), "index.html"));
-    if (await f.exists()) return new Response(f, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    // no-cache:本地面板改前端后刷新即生效,不被浏览器缓存住旧 app.js。
+    if (await f.exists()) return new Response(f, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" } });
     return new Response("web/index.html 缺失 —— 请确认从 repo 根目录运行", { status: 404 });
   }
-  // 其余静态文件(app.js 等),限制在 web/ 内防目录穿越
-  const safe = path.replace(/\.\./g, "").replace(/^\/+/, "");
-  const candidate = join(webDir(), safe);
-  if (candidate.startsWith(webDir()) && existsSync(candidate)) {
-    return new Response(Bun.file(candidate));
+  // 其余静态文件(app.js 等),限制在 web/ 内防目录穿越。
+  // 用 resolve + startsWith 做真正的越界防护(去掉无用的 .replace(/\.\./) 假防护)。
+  const candidate = resolve(webDir(), `.${path}`);
+  if (candidate.startsWith(webDir() + "/") && existsSync(candidate)) {
+    // app.js 等同样 no-cache,避免改了前端用户/工具仍跑旧缓存。
+    return new Response(Bun.file(candidate), { headers: { "Cache-Control": "no-cache" } });
   }
 
   if (path.startsWith("/api/")) {

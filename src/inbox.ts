@@ -89,7 +89,11 @@ export function listPending(): InboxItem[] {
   }
   for (const f of files.sort()) {
     try {
-      out.push(JSON.parse(readFileSync(join(dir, f), "utf8")) as InboxItem);
+      const item = JSON.parse(readFileSync(join(dir, f), "utf8")) as InboxItem;
+      // 字段守卫:缺 id 或 action 非字符串的"幽灵项"跳过 —— 否则下游 classify 会崩、
+      // 面板会渲染空白指令。把"坏行跳过"的语义从"JSON 解析失败"扩到"schema 不符"。
+      if (typeof item?.id !== "string" || typeof item?.action !== "string") continue;
+      out.push(item);
     } catch {
       // 坏行/半写文件跳过,不拖垮整个读取
     }
@@ -110,7 +114,10 @@ export function listDone(): InboxItem[] {
   const out: InboxItem[] = [];
   for (const f of files.sort()) {
     try {
-      out.push(JSON.parse(readFileSync(join(dir, f), "utf8")) as InboxItem);
+      const item = JSON.parse(readFileSync(join(dir, f), "utf8")) as InboxItem;
+      // 强制 status:"done" —— done/ 里的文件就是已归档,无论其内部 status 写的是什么。
+      // (非经 markDone 挪进来的文件可能内部仍是 "pending",会让信箱徽章虚高。)
+      out.push({ ...item, status: "done" });
     } catch {
       // 坏行/半写文件跳过
     }
@@ -123,6 +130,10 @@ export function listDone(): InboxItem[] {
  * 返回 true 表示成功移动,false 表示该 id 不存在于 pending。
  */
 export function markDone(id: string): boolean {
+  // 路径遍历防护:id 拼进文件路径,MCP 工具会把它暴露给自动化 agent ——
+  // 传 "../../foo" 能覆写区外文件。合法 id 是 ULID(26 位 Crockford base32)。
+  // 严格只放行该字符集,任何含 / . 或异常长度的 id 直接拒绝。
+  if (!/^[0-9A-HJKMNP-TV-Z]{26}$/i.test(id)) return false;
   const src = join(pendingDir(), `${id}.json`);
   if (!existsSync(src)) return false;
   mkdirSync(doneDir(), { recursive: true });

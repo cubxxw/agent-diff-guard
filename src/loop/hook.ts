@@ -30,23 +30,8 @@ export async function handlePostToolUse(): Promise<void> {
   }
 }
 
-export function hookConfig(guardCliPath: string) {
-  return {
-    hooks: {
-      PostToolUse: [
-        {
-          matcher: { tool_name: "Edit|Write|MultiEdit" },
-          hooks: [
-            {
-              type: "command",
-              command: `echo $TOOL_INPUT | bun run ${guardCliPath}`,
-            },
-          ],
-        },
-      ],
-    },
-  };
-}
+// 注:hook 配置生成统一走 adapters.ts(claudeSnippet 等),含正确的字符串 matcher +
+// 绝对路径。本文件只负责 PostToolUse 的 stdin 消费(handlePostToolUse)。
 
 if (import.meta.main) {
   handlePostToolUse().catch(() => {});

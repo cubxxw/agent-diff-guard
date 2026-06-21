@@ -194,6 +194,11 @@ export interface MorningReport {
     status: "stable" | "drifting" | "diverged";
     currentDrift: number;
     trend: "improving" | "stable" | "worsening";
+    // Why drift moved: goal keywords that recently touched files do not match
+    reason: {
+      missingKeywords: string[]; // goal keywords absent from recent changed paths
+      recentPathsSample: string[]; // up to 5 most-touched paths recently
+    };
   };
   budgetSummary: {
     tokensUsed: number;
@@ -205,6 +210,12 @@ export interface MorningReport {
     iteration: number;
     commitHash: string;
   } | null;
+  // Recent rollback candidates (newest first), up to 3, for one-click copy in UI
+  rollbackCandidates: {
+    iteration: number;
+    commitHash: string;
+    timestamp: string;
+  }[];
   emergencyBrakeTriggered: boolean;
   recommendation: "continue" | "review-and-continue" | "rollback" | "stop";
 }

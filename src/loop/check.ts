@@ -16,8 +16,21 @@ import type { FileChange, Finding } from "../rules";
 import { detectViolations } from "../violations";
 import { loadPolicy } from "../policy";
 import { buildFindingMeta } from "../event";
+import { spawnSync } from "node:child_process";
 
 const HISTORY_CAP = 500;
+
+/** 解析仓库当前 HEAD 的 short SHA;拿不到(非 git 仓库/git 不可用)时返回 null。 */
+function headSha(cwd: string): string | null {
+  try {
+    const r = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd, encoding: "utf8" });
+    if (r.status !== 0) return null;
+    const sha = r.stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
+}
 
 /** LE-04: env-configurable daily cross-session token budget (0/unset = unlimited). */
 function dailyTokenBudget(): number | null {
@@ -185,7 +198,9 @@ export async function checkIteration(opts: {
     session.rollbackPoints.push({
       iteration,
       timestamp: now,
-      commitHash: "HEAD",
+      // 落【真实 short SHA】而非字面 "HEAD" —— 晨报的"安全回滚点"要能真的 git reset 回去;
+      // 写死 "HEAD" 时复制出来是空操作(HEAD 早已前移)。解析失败才退回 "HEAD"(兼容)。
+      commitHash: headSha(session.cwd) ?? "HEAD",
     });
     if (session.rollbackPoints.length > HISTORY_CAP) {
       session.rollbackPoints = session.rollbackPoints.slice(-HISTORY_CAP);

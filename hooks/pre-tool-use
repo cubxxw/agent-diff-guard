@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# PreToolUse hook shim — pipes stdin to the pre-tool guard (编码前刹车)
+exec bun run "$(dirname "$0")/../src/loop/pretool.ts"

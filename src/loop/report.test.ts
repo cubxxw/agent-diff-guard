@@ -116,6 +116,72 @@ describe("generateReport", () => {
   });
 });
 
+describe("driftReason (S4)", () => {
+  test("missingKeywords lists goal keywords absent from recent paths", () => {
+    const session = makeSession({
+      goalKeywords: ["auth", "login"],
+      findingsLog: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", rule: "r1", severity: "wake-you-up", path: "src/billing/charge.ts", whySummary: "x" },
+        { iteration: 2, timestamp: "2026-06-17T00:02:00Z", rule: "r1", severity: "wake-you-up", path: "src/billing/refund.ts", whySummary: "x" },
+      ],
+    });
+    const report = generateReport(session);
+    expect(report.driftSummary.reason.missingKeywords).toContain("auth");
+    expect(report.driftSummary.reason.missingKeywords).toContain("login");
+    expect(report.driftSummary.reason.recentPathsSample.length).toBeGreaterThan(0);
+  });
+
+  test("keyword present in path is not missing", () => {
+    const session = makeSession({
+      goalKeywords: ["auth"],
+      findingsLog: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", rule: "r1", severity: "wake-you-up", path: "src/auth/login.ts", whySummary: "x" },
+      ],
+    });
+    const report = generateReport(session);
+    expect(report.driftSummary.reason.missingKeywords).not.toContain("auth");
+  });
+
+  test("rollbackCandidates returns up to 3, newest first", () => {
+    const session = makeSession({
+      rollbackPoints: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", commitHash: "aaa" },
+        { iteration: 2, timestamp: "2026-06-17T00:02:00Z", commitHash: "bbb" },
+        { iteration: 3, timestamp: "2026-06-17T00:03:00Z", commitHash: "ccc" },
+        { iteration: 4, timestamp: "2026-06-17T00:04:00Z", commitHash: "ddd" },
+      ],
+    });
+    const report = generateReport(session);
+    expect(report.rollbackCandidates.length).toBe(3);
+    expect(report.rollbackCandidates[0]!.commitHash).toBe("ddd");
+    expect(report.rollbackCandidates[2]!.commitHash).toBe("bbb");
+    expect(report.safeRollbackPoint!.commitHash).toBe("ddd");
+  });
+});
+
+describe("S2 signal density (all required fields present)", () => {
+  test("report carries all 5 mandatory MRA signal fields", () => {
+    const session = makeSession({
+      rollbackPoints: [{ iteration: 5, timestamp: "2026-06-17T00:05:00Z", commitHash: "xyz" }],
+      tokenSpend: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", inputTokens: 10_000, outputTokens: 5_000, cacheReadTokens: 0, estCostUsd: 0 },
+      ],
+      findingsLog: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", rule: "r1", severity: "wake-you-up", path: "x.ts", whySummary: "y" },
+      ],
+      riskTrend: [
+        { iteration: 1, timestamp: "2026-06-17T00:01:00Z", verdict: "pass", wakeCount: 0, lookCount: 0, cumulativeDrift: 0.1, budgetPct: 0.03 },
+      ],
+    });
+    const report = generateReport(session);
+    expect(report.iterationsWhileAway).toBeGreaterThan(0);
+    expect(report.budgetSummary.budgetPct).toBeGreaterThanOrEqual(0);
+    expect(report.driftSummary.trend).toBeDefined();
+    expect(report.topFindings.length).toBeGreaterThan(0);
+    expect(report.safeRollbackPoint).not.toBeNull();
+  });
+});
+
 describe("renderReport", () => {
   test("produces readable output", () => {
     const report = generateReport(makeSession({ cumulativeDrift: 0.2 }));

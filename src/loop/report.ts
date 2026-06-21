@@ -73,14 +73,35 @@ export function generateReport(
       ? Math.max(0, Math.floor((session.budgetTokens - totalTokensUsed) / avgPerIter))
       : null;
 
-  // Safe rollback point
+  // Safe rollback point + recent candidates (newest first, up to 3)
+  const rollbackCandidates = session.rollbackPoints
+    .slice(-3)
+    .reverse()
+    .map((r) => ({
+      iteration: r.iteration,
+      commitHash: r.commitHash,
+      timestamp: r.timestamp,
+    }));
   const safeRollbackPoint =
-    session.rollbackPoints.length > 0
+    rollbackCandidates.length > 0
       ? {
-          iteration: session.rollbackPoints[session.rollbackPoints.length - 1]!.iteration,
-          commitHash: session.rollbackPoints[session.rollbackPoints.length - 1]!.commitHash,
+          iteration: rollbackCandidates[0]!.iteration,
+          commitHash: rollbackCandidates[0]!.commitHash,
         }
       : null;
+
+  // Drift reason: which goal keywords are missing from recent touched paths
+  const recentPaths = relevantFindings.map((f) => f.path);
+  const pathCorpus = recentPaths.join(" ").toLowerCase();
+  const missingKeywords = session.goalKeywords.filter(
+    (kw) => kw.length > 0 && !pathCorpus.includes(kw.toLowerCase()),
+  );
+  const pathCounts = new Map<string, number>();
+  for (const p of recentPaths) pathCounts.set(p, (pathCounts.get(p) ?? 0) + 1);
+  const recentPathsSample = [...pathCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([p]) => p);
 
   const emergencyBrakeTriggered = session.status === "emergency-braked";
 
@@ -102,6 +123,10 @@ export function generateReport(
       status: driftStatus,
       currentDrift,
       trend: driftTrend,
+      reason: {
+        missingKeywords,
+        recentPathsSample,
+      },
     },
     budgetSummary: {
       tokensUsed: totalTokensUsed,
@@ -110,6 +135,7 @@ export function generateReport(
       estimatedIterationsRemaining,
     },
     safeRollbackPoint,
+    rollbackCandidates,
     emergencyBrakeTriggered,
     recommendation,
   };
@@ -122,6 +148,16 @@ export function renderReport(report: MorningReport): string {
   lines.push(`Iterations while away: ${report.iterationsWhileAway}`);
   lines.push("");
   lines.push(`Drift: ${report.driftSummary.status} (${(report.driftSummary.currentDrift * 100).toFixed(0)}%, ${report.driftSummary.trend})`);
+  if (report.driftSummary.reason.recentPathsSample.length === 0) {
+    // 没有改动路径语料时,"所有 goal 词都缺失"是假象 —— 如实说明无从判断,而非
+    // 把 goal 自己的词当成"缺失关键词"误导用户(看着像 goal 写得不全)。
+    lines.push(`  why: 本轮无改动路径,无法据此判断漂移`);
+  } else if (report.driftSummary.reason.missingKeywords.length > 0) {
+    lines.push(`  why: goal 关键词未出现在本轮改动路径中 [${report.driftSummary.reason.missingKeywords.join(", ")}]`);
+  }
+  if (report.driftSummary.reason.recentPathsSample.length > 0) {
+    lines.push(`  recent paths: ${report.driftSummary.reason.recentPathsSample.join(", ")}`);
+  }
   lines.push(`Budget: ${(report.budgetSummary.budgetPct * 100).toFixed(0)}% used${report.budgetSummary.estimatedIterationsRemaining != null ? `, ~${report.budgetSummary.estimatedIterationsRemaining} iters left` : ""}`);
   lines.push("");
 
@@ -135,6 +171,12 @@ export function renderReport(report: MorningReport): string {
 
   if (report.safeRollbackPoint) {
     lines.push(`Safe rollback: iteration ${report.safeRollbackPoint.iteration} (${report.safeRollbackPoint.commitHash})`);
+  }
+  if (report.rollbackCandidates.length > 1) {
+    lines.push(`Other candidates:`);
+    for (const c of report.rollbackCandidates.slice(1)) {
+      lines.push(`  - iteration ${c.iteration} (${c.commitHash})`);
+    }
   }
   if (report.emergencyBrakeTriggered) {
     lines.push("WARNING: EMERGENCY BRAKE TRIGGERED");

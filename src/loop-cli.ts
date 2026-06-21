@@ -7,6 +7,12 @@ import {
 } from "./loop/session";
 import { checkIteration } from "./loop/check";
 import { generateReport, renderReport, reportToJson } from "./loop/report";
+import {
+  generateAcceptanceReport,
+  renderAcceptanceReport,
+  acceptanceReportToJson,
+} from "./loop/verify";
+import { pushReport, type PushChannel } from "./loop/report-push";
 import { adapterConfig, type SupportedAgent } from "./loop/adapters";
 
 const C = {
@@ -48,6 +54,13 @@ const LOOP_HELP = `agent-diff-guard loop — Loop 验证层
 
   report  [--session <id>] [--json]
           生成晨报
+
+  verify  [--session <id>] [--json]
+          结尾验收闸门:汇总整个 session 的 drift / wake findings / policy /
+          预算,给出 pass / needs-review 的边界裁决(对齐"结尾验安全/结果")
+
+  morning [--push macos,webhook] [--webhook <url>] [--all] [--json]
+          为 active session 生成晨报,可选推送到 macOS 通知 / webhook
 
   stop    [--session <id>]
           停止 session
@@ -157,6 +170,84 @@ export async function handleLoopCommand(args: string[]): Promise<void> {
     return;
   }
 
+  if (sub === "verify") {
+    const cwd = parseFlag(args, "--cwd") ?? process.cwd();
+    const sessionId = parseFlag(args, "--session") ?? activeSessionForCwd(cwd)?.id;
+    if (!sessionId) {
+      console.error(C.red("No active session found."));
+      process.exit(2);
+    }
+    const session = loadSession(sessionId);
+    if (!session) {
+      console.error(C.red(`Session ${sessionId} not found.`));
+      process.exit(2);
+    }
+    const acceptance = generateAcceptanceReport(session);
+    if (hasFlag(args, "--json")) {
+      console.log(acceptanceReportToJson(acceptance));
+    } else {
+      const icon = acceptance.verdict === "pass" ? C.green("✓") : C.yellow("⚠");
+      console.log(`${icon} ${renderAcceptanceReport(acceptance)}`);
+    }
+    // Boundary ruling: non-zero exit when the session needs human review.
+    if (acceptance.verdict === "needs-review") process.exit(1);
+    return;
+  }
+
+  if (sub === "morning") {
+    const all = hasFlag(args, "--all");
+    const pushRaw = parseFlag(args, "--push");
+    const webhookUrl = parseFlag(args, "--webhook");
+    const json = hasFlag(args, "--json");
+
+    const targets = all
+      ? listSessions().filter((s) => s.status === "active")
+      : (() => {
+          const cwd = parseFlag(args, "--cwd") ?? process.cwd();
+          const sessionId = parseFlag(args, "--session") ?? activeSessionForCwd(cwd)?.id;
+          const s = sessionId ? loadSession(sessionId) : null;
+          return s ? [s] : [];
+        })();
+
+    if (targets.length === 0) {
+      console.error(C.red("No matching session. Try --all or --session <id>."));
+      process.exit(2);
+    }
+
+    const channels: PushChannel[] = [];
+    if (pushRaw) {
+      for (const kind of pushRaw.split(",").map((x) => x.trim())) {
+        if (kind === "macos") channels.push({ kind: "macos" });
+        else if (kind === "webhook" && webhookUrl) channels.push({ kind: "webhook", url: webhookUrl });
+        else if (kind === "stdout") channels.push({ kind: "stdout" });
+      }
+    }
+
+    const outputs = [];
+    for (const session of targets) {
+      const report = generateReport(session);
+      const pushResults = channels.length > 0 ? await pushReport(report, channels) : [];
+      outputs.push({ sessionId: session.id, report, pushResults });
+    }
+
+    if (json) {
+      console.log(JSON.stringify(outputs, null, 2));
+    } else {
+      for (const o of outputs) {
+        console.log(renderReport(o.report));
+        if (o.pushResults.length > 0) {
+          console.log(C.dim("Pushed:"));
+          for (const r of o.pushResults) {
+            const icon = r.ok ? C.green("✓") : C.red("✗");
+            console.log(C.dim(`  ${icon} ${r.channel}${r.reason ? ` — ${r.reason}` : ""}`));
+          }
+        }
+        console.log("");
+      }
+    }
+    return;
+  }
+
   if (sub === "stop") {
     const cwd = parseFlag(args, "--cwd") ?? process.cwd();
     const sessionId = parseFlag(args, "--session") ?? activeSessionForCwd(cwd)?.id;
@@ -208,4 +299,13 @@ export async function handleLoopCommand(args: string[]): Promise<void> {
   console.error(C.red(`Unknown loop subcommand: ${sub}`));
   console.log(LOOP_HELP);
   process.exit(2);
+}
+
+// 直接 `bun run src/loop-cli.ts <sub>` 也能用(此前缺入口块 → 静默 exit 0,新人撞墙)。
+// 主入口仍是 `cli.ts loop <sub>`;这里只是让独立运行也走同一派发。
+if (import.meta.main) {
+  handleLoopCommand(process.argv.slice(2)).catch((e) => {
+    console.error(C.red(String(e?.message ?? e)));
+    process.exit(1);
+  });
 }

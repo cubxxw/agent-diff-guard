@@ -44,6 +44,15 @@ test("markDone 对不存在的 id 返回 false", async () => {
   expect(markDone("nonexistent")).toBe(false);
 });
 
+test("markDone 拒绝路径遍历 id(安全:不越界写文件)", async () => {
+  const { markDone } = await import("./inbox");
+  // 非 ULID 格式一律拒绝,防 ../../foo 覆写区外文件
+  expect(markDone("../../rule-overrides")).toBe(false);
+  expect(markDone("../../../etc/passwd")).toBe(false);
+  expect(markDone("a/b")).toBe(false);
+  expect(markDone("../escape")).toBe(false);
+});
+
 test("listPending 空信箱返回空数组", async () => {
   const { listPending } = await import("./inbox");
   expect(listPending()).toEqual([]);

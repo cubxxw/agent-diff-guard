@@ -49,6 +49,12 @@ export interface GuardEvent {
 
   repoRemote: string | null; // host+path,不含 token
   gitRange: string;
+  /**
+   * 扫描时 HEAD 的 commit short hash(7 位)。审计是历史回放,仓库当下状态可能已变,
+   * 所以必须在扫描当时落盘、不能事后跑 git 补。老数据没有该字段 → 面板显示 "—"。
+   * .optional() 语义:旧 events.jsonl 缺该字段不报错,保持向后兼容。
+   */
+  commitHash?: string | null;
   taskDescHash: string | null; // sha256(task) 前 16 位,不传原文
   taskDescLen: number | null;
 
@@ -59,6 +65,8 @@ export interface GuardEvent {
   // 团队字段:显式 opt-in 后才填(MVP 阶段均为 null)
   authorHash: string | null; // sha256(git email) 前 16 位
   repoAlias: string | null;
+
+  loopSessionId?: string;
 }
 
 const WHY_MAX = 80;
@@ -83,6 +91,9 @@ export interface BuildEventOpts {
   disposition: DispositionKind;
   /** git remote origin(已去敏),null 表示取不到 */
   repoRemote?: string | null;
+  /** 扫描时 HEAD 的 commit short hash(7 位);取不到传 null/不传 */
+  commitHash?: string | null;
+  loopSessionId?: string;
   nowMs?: number; // 可注入用于测试
 }
 
@@ -99,6 +110,7 @@ export async function buildEvent(o: BuildEventOpts): Promise<GuardEvent> {
     cliVersion: o.cliVersion,
     repoRemote: o.repoRemote ?? null,
     gitRange: o.gitRange,
+    commitHash: o.commitHash ?? null,
     taskDescHash: o.task ? await sha256prefix(o.task) : null,
     taskDescLen: o.task ? o.task.length : null,
     summary: {
@@ -111,5 +123,6 @@ export async function buildEvent(o: BuildEventOpts): Promise<GuardEvent> {
     disposition: o.disposition,
     authorHash: null, // MVP:未启用团队模式
     repoAlias: null,
+    ...(o.loopSessionId ? { loopSessionId: o.loopSessionId } : {}),
   };
 }

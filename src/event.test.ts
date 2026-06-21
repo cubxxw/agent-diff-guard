@@ -54,3 +54,19 @@ test("buildEvent: 统计数与 disposition 正确", async () => {
   expect(event.id).toHaveLength(26); // ULID
   expect(event.timestamp).toBe(new Date(1_749_500_000_000).toISOString());
 });
+
+test("buildEvent: commitHash 透传(传入则保留,不传则 null —— 向后兼容)", async () => {
+  const changes: FileChange[] = [{ path: "a.ts", kind: "modified", addedLines: [], removedLines: [] }];
+  // 传入 commitHash → 原样落盘
+  const withHash = await buildEvent({
+    cliVersion: "0.0.2", gitRange: "HEAD", task: undefined, changes, findings: [],
+    disposition: "auto-pass", commitHash: "a2fae93", nowMs: 1_749_500_000_000,
+  });
+  expect(withHash.commitHash).toBe("a2fae93");
+  // 不传 commitHash → null(模拟空仓/不在 git 里),不报错
+  const noHash = await buildEvent({
+    cliVersion: "0.0.2", gitRange: "HEAD", task: undefined, changes, findings: [],
+    disposition: "auto-pass", nowMs: 1_749_500_000_000,
+  });
+  expect(noHash.commitHash).toBeNull();
+});

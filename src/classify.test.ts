@@ -104,3 +104,17 @@ describe("detectKind — 推断 shell vs agent", () => {
     expect(detectKind("审查改动", "shell")).toBe("shell");
   });
 });
+
+describe("classify/detectKind — 非字符串 action 防御(坏 inbox 文件不掀翻 daemon)", () => {
+  // 坏文件可能把 action 写成 number/array/object;(action||"").trim() 会抛 TypeError。
+  // 强转兜底后,这些应安全降级而非崩溃。
+  const bad: unknown[] = [12345, ["a", "b"], { x: 1 }, true, null, undefined];
+  for (const v of bad) {
+    test(`classify(${JSON.stringify(v)}) 不抛错`, () => {
+      expect(() => classify(v as unknown as string)).not.toThrow();
+    });
+    test(`detectKind(${JSON.stringify(v)}) 不抛错`, () => {
+      expect(() => detectKind(v as unknown as string)).not.toThrow();
+    });
+  }
+});

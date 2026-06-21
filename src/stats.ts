@@ -27,6 +27,8 @@ export interface DispositionRow {
   timestamp: string;
   repoAlias: string | null;
   gitRange: string;
+  /** 扫描当时 HEAD 的 commit short hash;老事件没有该字段 → null(面板显示 "—") */
+  commitHash: string | null;
   wakeCount: number;
   rulesTriggered: string[];
   disposition: GuardEvent["disposition"];
@@ -77,6 +79,7 @@ export function dispositions(events: GuardEvent[], limit = 200): DispositionRow[
       timestamp: ev.timestamp,
       repoAlias: ev.repoAlias,
       gitRange: ev.gitRange,
+      commitHash: ev.commitHash ?? null, // 老事件无该字段 → null
       wakeCount: ev.summary.wakeCount,
       rulesTriggered: ev.summary.rulesTriggered,
       disposition: ev.disposition,

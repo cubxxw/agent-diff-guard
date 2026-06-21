@@ -8,6 +8,10 @@
 // 每条规则是一个纯函数:给它一个改动的文件,返回 0 或多个 Finding。
 // 这是固化 know-how 的地方 —— "哪些改动是该半夜惊醒的"就是十年 DevOps 的判断。
 
+// applyOverrides 套用户的规则覆盖(disable/降级)。rule-overrides 只 import 本文件的
+// Finding 类型(编译后擦除),无运行时循环依赖。
+import { applyOverrides } from "./rule-overrides";
+
 export type ChangeKind = "added" | "modified" | "deleted" | "renamed";
 
 export interface FileChange {
@@ -83,7 +87,8 @@ function contentFindings(fc: FileChange): Finding[] {
   return out;
 }
 
-export function pathFindings(fc: FileChange): Finding[] {
+/** 路径规则的原始命中(未套用户覆盖)。pathFindings/runRules 都从它出发。 */
+function rawPathFindings(fc: FileChange): Finding[] {
   const out: Finding[] = [];
   for (const r of SENSITIVE_PATH_RULES) {
     if (r.test.test(fc.path)) {
@@ -94,6 +99,14 @@ export function pathFindings(fc: FileChange): Finding[] {
   return out;
 }
 
+// 用户在面板上对规则做的 disable/降级 覆盖,在所有公开出口统一应用 ——
+// pathFindings(被 loop/check、pretool 直接调)与 runRules(队列/check/MCP)各套一次,
+// 一处定义、全通道生效。无覆盖时是 no-op。
+export function pathFindings(fc: FileChange): Finding[] {
+  return applyOverrides(rawPathFindings(fc));
+}
+
 export function runRules(changes: FileChange[]): Finding[] {
-  return changes.flatMap((fc) => [...pathFindings(fc), ...contentFindings(fc)]);
+  const raw = changes.flatMap((fc) => [...rawPathFindings(fc), ...contentFindings(fc)]);
+  return applyOverrides(raw);
 }

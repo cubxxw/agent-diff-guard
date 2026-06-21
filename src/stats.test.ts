@@ -68,6 +68,16 @@ test("dispositions: 时间倒序", () => {
   expect(d[1]!.id).toBe("A");
 });
 
+test("dispositions: commitHash 透传(有则保留,老事件无该字段 → null)", () => {
+  const d = dispositions([
+    ev({ id: "withHash", commitHash: "a2fae93" }),
+    ev({ id: "noHash" }), // ev() 默认不带 commitHash,模拟老事件
+  ]);
+  const byId = Object.fromEntries(d.map((x) => [x.id, x]));
+  expect(byId.withHash!.commitHash).toBe("a2fae93");
+  expect(byId.noHash!.commitHash).toBeNull();
+});
+
 test("overview: 总量与放行率", () => {
   const events = [
     ev({ disposition: "auto-pass", summary: { totalFilesChanged: 1, wakeCount: 0, lookCount: 0, rulesTriggered: [] } }),

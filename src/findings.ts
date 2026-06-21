@@ -21,6 +21,7 @@ import { existsSync } from "node:fs";
 import { runRules, type FileChange, type Finding, type Severity } from "./rules";
 import { parseDiff, driftFindings, isLowInfoTask } from "./scan";
 import { allTranscripts, type RepoTranscript, type TaskTurn } from "./transcript";
+import { availableCollectors } from "./collectors/registry";
 import { readEvents } from "./logger";
 import type { GuardEvent } from "./event";
 
@@ -62,6 +63,18 @@ export interface QueueFinding {
   hitCount?: number;
   /** 同一处最早一次被刹的时间 ISO(history 聚合产物) */
   firstSeen?: string | null;
+  /** 改动所在的 commit 短 hash(live 时取当前 HEAD;history/无仓库时 null)。回答"是哪个提交"。 */
+  commit?: string | null;
+  /**
+   * 这条改动"现在还能不能被处置"——决定放行/驳回是否仍然有意义:
+   *   uncommitted —— 工作区未提交改动,完全可处置(撤回/修正零成本)。
+   *   unpushed    —— 已提交但未推送(@{u}..HEAD),还能本地 reset/amend,但需小心。
+   *   history     —— 历史回放,改动早已落地/合并,裁决仅作记录,不可逆。
+   * live 项据 pickRange 得出;history 项恒为 "history";demo 项给 uncommitted。
+   */
+  disposable?: "uncommitted" | "unpushed" | "history";
+  /** 改动来自哪个 agent(如 "Claude Code");拿不到时 null。回答"谁改的"。 */
+  agent?: string | null;
 }
 
 const MAX_DIFF_LINES = 40;
@@ -72,20 +85,33 @@ function git(args: string[], cwd: string): string | null {
   return r.stdout;
 }
 
-/** 取一个仓库"当下待审"的 git 范围:优先 @{u}..HEAD(本地领先 upstream),否则工作区改动。 */
-function pickRange(cwd: string): string | null {
-  // 有 upstream 且本地有领先提交 → 审"还没推上去的"
+/** pickRange 的结果:git 范围 + "现在还能不能处置"的语义。 */
+interface PickedRange {
+  range: string;
+  disposable: "uncommitted" | "unpushed";
+}
+
+/** 取一个仓库"当下待审"的 git 范围:优先 @{u}..HEAD(本地领先 upstream),否则工作区改动。
+ *  同时给出 disposable —— 这次改动现在还能不能撤回/修正,决定裁决是否仍有意义。 */
+function pickRange(cwd: string): PickedRange | null {
+  // 有 upstream 且本地有领先提交 → 审"还没推上去的"(已提交未 push,仍可 reset/amend)
   const ahead = git(["rev-list", "--count", "@{u}..HEAD"], cwd);
-  if (ahead !== null && Number(ahead.trim()) > 0) return "@{u}..HEAD";
-  // 否则看工作区是否有未提交改动(含已暂存)
+  if (ahead !== null && Number(ahead.trim()) > 0) return { range: "@{u}..HEAD", disposable: "unpushed" };
+  // 否则看工作区是否有未提交改动(含已暂存)——完全可处置
   const status = git(["status", "--porcelain"], cwd);
-  if (status !== null && status.trim().length > 0) return "HEAD";
+  if (status !== null && status.trim().length > 0) return { range: "HEAD", disposable: "uncommitted" };
   return null;
 }
 
 function currentBranch(cwd: string): string | null {
   const b = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   return b ? b.trim() : null;
+}
+
+/** 当前 HEAD 的短 hash(回答"是哪个提交");拿不到时 null。 */
+function headCommit(cwd: string): string | null {
+  const c = git(["rev-parse", "--short", "HEAD"], cwd);
+  return c ? c.trim() : null;
 }
 
 /** 把某文件的 FileChange 转成面板 diff 片段(裁到 MAX_DIFF_LINES)。 */
@@ -143,17 +169,53 @@ export interface BuildQueueOpts {
 }
 
 /**
+ * Per-repo 指纹缓存:审查队列慢在每个仓库都要实时 `git diff` + 跑规则。
+ * 但仓库的"待审状态"只在 HEAD 变了 / 工作区动了时才变 —— 指纹相同就直接复用
+ * 上次的 findings,跳过最贵的 parseDiff。指纹由 pickRange 已经跑过的 git 输出
+ * (range + status 摘要 + HEAD commit)拼成,不额外多跑 git。
+ * 进程级缓存,纯读、可随时丢弃;测试用 transcripts 注入路径不受影响。
+ */
+const liveRepoCache = new Map<string, { fp: string; findings: QueueFinding[] }>();
+
+/** 取仓库当下"待审状态指纹":range + 工作区改动摘要 + HEAD。变了才需要重扫。 */
+function repoFingerprint(cwd: string, range: string, commit: string | null, taskStamp: string): string {
+  // status --porcelain 的全文反映了所有未提交改动;range 区分 unpushed/uncommitted;
+  // commit 捕捉"提交了新的一笔"。三者拼起来即可判定"待审内容是否变化"。
+  const status = git(["status", "--porcelain"], cwd) ?? "";
+  return `${range} ${commit ?? ""} ${taskStamp} ${status}`;
+}
+
+/**
  * 扫所有有真实仓库目录的 transcript,对其当下待审范围实时跑规则,
  * 产出 live 队列项。纯读 git、不写任何东西。
  */
 function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
   const out: QueueFinding[] = [];
 
+  // 改动来自哪个 agent:仅当本机恰好只有一个可采集源时能确定归属,
+  // 多源并存(既用 Claude Code 又用 Cursor)时不臆测,留 null —— 宁可不知,不可猜错。
+  const sources = availableCollectors();
+  const agent = sources.length === 1 ? sources[0]!.name : null;
+
   for (const rt of transcripts) {
     const cwd = rt.repoDir;
     if (!cwd || !existsSync(cwd)) continue;
-    const range = pickRange(cwd);
-    if (!range) continue;
+    const picked = pickRange(cwd);
+    if (!picked) continue;
+    const range = picked.range;
+    const commit = headCommit(cwd);
+
+    // turn 影响 drift 判断,纳入指纹:agent 又下新指令(timestamp 变)时要重算。
+    const turn = latestTaskTurn(rt);
+    const taskStamp = turn?.timestamp ?? "";
+
+    // 指纹未变 → 复用上次该仓库的 findings,跳过 parseDiff(最贵的一步)。
+    const fp = repoFingerprint(cwd, range, commit, taskStamp);
+    const cached = liveRepoCache.get(cwd);
+    if (cached && cached.fp === fp) {
+      out.push(...cached.findings);
+      continue;
+    }
 
     let changes: FileChange[];
     try {
@@ -161,9 +223,11 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
     } catch {
       continue; // git 失败的仓库跳过,不拖垮整个队列
     }
-    if (changes.length === 0) continue;
+    if (changes.length === 0) {
+      liveRepoCache.set(cwd, { fp, findings: [] }); // 无改动也缓存,避免反复重扫
+      continue;
+    }
 
-    const turn = latestTaskTurn(rt);
     const task = turn?.task ?? "";
     const branch = turn?.gitBranch ?? currentBranch(cwd);
     const repo = rt.project.split("/").slice(-2).join("/");
@@ -182,10 +246,15 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
     // 任务有内容但信息量不足:给个可读提示,让前端知道 drift=null 是"无法判断"而非"安全"
     const driftNote = task && lowInfo ? "(任务描述不足以判断偏离 —— 已跳过偏离检测,请人工确认改动范围)" : "";
 
+    // 先收集本仓库的 findings,再一并写入缓存 + 总队列(指纹未变时下次可整体复用)。
+    const repoFindings: QueueFinding[] = [];
     for (const f of findings) {
       const fc = byPath.get(f.path);
-      out.push({
-        id: `${range}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
+      repoFindings.push({
+        // id 必须含 repo:否则 range 对所有工作区改动恒为 "HEAD",repoA 与 repoB 的
+        // 同 rule+同 path 命中 id 完全相同 → 裁决一个会让另一个被当"已裁决"静默消失
+        // (戳穿"不漏"的承诺)。前缀 repo 隔离每个仓库的裁决。
+        id: `${repo}:${range}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
         origin: "live",
         level: LEVEL[f.severity],
         rule: f.rule,
@@ -198,8 +267,13 @@ function buildLive(transcripts: RepoTranscript[]): QueueFinding[] {
         timestamp: turn?.timestamp ?? null,
         stats: { add: fc?.addedLines.length ?? 0, del: fc?.removedLines.length ?? 0 },
         diff: fc ? toDiffLines(fc) : [],
+        commit,
+        disposable: picked.disposable,
+        agent,
       });
     }
+    liveRepoCache.set(cwd, { fp, findings: repoFindings });
+    out.push(...repoFindings);
   }
 
   return out;
@@ -244,11 +318,12 @@ export function aggregateHistory(events: GuardEvent[]): QueueFinding[] {
         existing.hitCount = (existing.hitCount ?? 1) + 1;
         existing.timestamp = ev.timestamp;
         existing.reason = f.whySummary;
-        existing.task = ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,原文未留存)` : "";
+        existing.task = ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,审计层未留原文)` : "";
         continue;
       }
       byKey.set(key, {
-        id: `hist:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
+        // 同 live:id 含 repo,避免跨仓库同 rule+path 的历史项撞 id、裁决连带。
+        id: `hist:${repo}:${f.rule}:${f.path}`.replace(/[^\w.:/@-]/g, "_"),
         origin: "history",
         level: LEVEL[f.severity],
         rule: f.rule,
@@ -256,7 +331,7 @@ export function aggregateHistory(events: GuardEvent[]): QueueFinding[] {
         branch: null,
         file: f.path,
         // events 不留 task 原文(只有 hash),给出可读占位而非假装有正文
-        task: ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,原文未留存)` : "",
+        task: ev.taskDescLen ? `历史任务(${ev.taskDescLen} 字,审计层未留原文)` : "",
         drift: null,
         reason: f.whySummary,
         timestamp: ev.timestamp,
@@ -264,6 +339,9 @@ export function aggregateHistory(events: GuardEvent[]): QueueFinding[] {
         diff: [], // 隐私铁律:历史无正文可重放
         hitCount: 1,
         firstSeen: ev.timestamp,
+        commit: null, // events 不留 commit 正文,只回放元数据
+        disposable: "history", // 历史改动已落地,裁决仅作记录、不可逆
+        agent: null,
       });
     }
   }
@@ -294,6 +372,9 @@ function demoSeeds(): QueueFinding[] {
         { t: "+", s: '  clientSecret: "sk-live-9f3a...本演示密钥已打码",' },
         { t: " ", s: "  redirectUri: process.env.OAUTH_REDIRECT," },
       ],
+      commit: "a1b2c3d",
+      disposable: "uncommitted",
+      agent: "Claude Code",
     },
     {
       id: "demo:wake:ci-pipeline",
@@ -312,6 +393,9 @@ function demoSeeds(): QueueFinding[] {
         { t: "-", s: "      - run: npm test" },
         { t: "+", s: "      - run: npm test || true   # 演示:放宽了 CI 断言" },
       ],
+      commit: "a1b2c3d",
+      disposable: "uncommitted",
+      agent: "Claude Code",
     },
     {
       id: "demo:look:dependency-manifest",
@@ -327,6 +411,9 @@ function demoSeeds(): QueueFinding[] {
       timestamp: new Date().toISOString(),
       stats: { add: 1, del: 0 },
       diff: [{ t: "+", s: '    "passport-oauth2": "^1.8.0",' }],
+      commit: "a1b2c3d",
+      disposable: "uncommitted",
+      agent: "Claude Code",
     },
   ];
 }

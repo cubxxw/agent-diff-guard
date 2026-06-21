@@ -51,7 +51,9 @@ const DANGER: Array<[RegExp, string]> = [
  */
 export function detectKind(action: string, kind?: Kind): Kind {
   if (kind) return kind;
-  const s = (action || "").trim();
+  // String(...) 防御:坏 inbox 文件可能把 action 写成 number/array/object,
+  // (action || "").trim() 对非字符串会抛 TypeError、掀翻 daemon。强转兜底。
+  const s = String(action ?? "").trim();
   if (!s) return "agent";
   // 以 shell 命令样式开头:命令名 + 空格/结尾,或 cd/./ 前缀
   const SHELL_HEAD = /^(cd|ls|cat|git|npm|bun|node|pnpm|yarn|grep|rg|find|echo|mkdir|cp|mv|rm|chmod|chown|curl|wget|dd|sudo|sh|bash|zsh|make|docker|kubectl)(\s|$)/;
@@ -72,7 +74,7 @@ export function detectKind(action: string, kind?: Kind): Kind {
  */
 // 第二参数保留 kind 入口以备将来按 kind 细分策略;当前黑名单先行、不依赖它,故下划线标记。
 export function classify(action: string, _opts: { kind?: Kind } = {}): ClassifyResult {
-  const s = (action || "").trim();
+  const s = String(action ?? "").trim(); // 防御非字符串 action(见 detectKind 注释)
   if (!s) return { verdict: "blocked", reason: "空指令" };
 
   for (const [re, reason] of DANGER) {

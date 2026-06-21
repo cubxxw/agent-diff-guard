@@ -166,20 +166,36 @@ export async function runDaemon(opts: DaemonOpts = {}): Promise<ProcessResult[]>
     }
     for (const item of pending) {
       if (opts.signal?.aborted) break;
-      if (opts.dryRun) {
-        const v = classify(item.action, { kind: item.kind });
+      // 兜底:任何一条指令处理抛错都不掀翻 daemon(兑现"一条坏指令掀不翻 daemon"承诺)。
+      // 坏项收敛成 failed 并归档,避免坏文件留在 pending → 每次重启再崩(永久复发)。
+      try {
+        if (opts.dryRun) {
+          const v = classify(item.action, { kind: item.kind });
+          const r: ProcessResult = {
+            inboxId: item.id,
+            outcome: v.verdict === "blocked" ? "blocked" : "executed",
+            reason: v.reason || "(将自动执行)",
+          };
+          results.push(r);
+          opts.onResult?.(r, item);
+          continue;
+        }
+        const r = await processOne(item);
+        results.push(r);
+        opts.onResult?.(r, item);
+      } catch (e) {
         const r: ProcessResult = {
-          inboxId: item.id,
-          outcome: v.verdict === "blocked" ? "blocked" : "executed",
-          reason: v.reason || "(将自动执行)",
+          inboxId: item?.id ?? "(unknown)",
+          outcome: "failed",
+          reason: `处理异常: ${e instanceof Error ? e.message : String(e)}`,
         };
         results.push(r);
         opts.onResult?.(r, item);
-        continue;
+        // 非 dry-run 时把坏项移出 pending,防永久复发(dry-run 不动 pending)。
+        if (!opts.dryRun && typeof item?.id === "string") {
+          try { markDone(item.id); } catch { /* 归档失败也不再抛 */ }
+        }
       }
-      const r = await processOne(item);
-      results.push(r);
-      opts.onResult?.(r, item);
     }
   } while (!singlePass);
 

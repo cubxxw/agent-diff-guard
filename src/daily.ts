@@ -64,11 +64,16 @@ function decodeProject(dirName: string): string {
 }
 
 /** YYYY-MM-DD,按本地时区(用户看的是自己当地的"今天") */
-function localDate(d: Date): string {
+export function localDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** "今天"按本地时区取(切勿用 toISOString —— 那是 UTC,北京时区凌晨前会差一天) */
+export function todayLocal(): string {
+  return localDate(new Date());
 }
 
 /** 把一行解析成 MsgRecord(非消息行返回 null) */

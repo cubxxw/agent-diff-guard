@@ -24,9 +24,11 @@ export function decodeProject(dirName: string): string {
   return dirName.replace(/^-/, "/").replace(/-/g, "/");
 }
 
+// 版本 4:parseSession 改为按 message.id 去重(同一消息被拆成多行 jsonl 重复携带 usage,
+//          旧逻辑按行累加致 token/成本虚高 ~1.9x),撞版本让旧 sessions 缓存失效重算。
 // 版本 3:transcript 的 TaskTurn 新增 cwd 字段,撞版本让旧 transcript 缓存失效重建。
 // (版本 2:从早期 sessions-cache 的 {session} 键迁移到统一的 {value} 键。)
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 interface CacheEntry<T> {
   mtimeMs: number;
   size: number;

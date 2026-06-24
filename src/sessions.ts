@@ -71,14 +71,26 @@ function emptyTok(): Tok {
 interface RawLine {
   type?: string;
   timestamp?: string;
-  message?: { model?: string; usage?: Record<string, number> };
+  message?: { id?: string; model?: string; usage?: Record<string, number> };
 }
 
-/** 累加一行 assistant 消息的 usage 到 acc。返回该行的 timestamp(若有)。 */
-function accLine(acc: Tok, obj: RawLine): string | null {
+/** 累加一行 assistant 消息的 usage 到 acc。返回该行的 timestamp(若有)。
+ *
+ *  去重(seen):Claude Code 把同一条 assistant 消息(思考块 / 工具调用 / 流式分段)
+ *  拆成多行 jsonl 写入,每行都携带**完全相同**的 message.id 与 usage。若按行累加,
+ *  同一次模型调用的 token 会被重复计 2~3 次 —— 实测单 session 重复率 ~46%,cacheRead
+ *  被放大 ~1.9x,导致面板成本几乎翻倍。故按 message.id 去重:同一 id 只计一次 usage。 */
+function accLine(acc: Tok, obj: RawLine, seen: Set<string>): string | null {
   const msg = obj.message;
   const u = msg?.usage;
   if (!u) return obj.timestamp ?? null;
+  // 同一 message.id 的后续重复行:仍更新 model/timestamp,但不再累加 usage。
+  const id = msg?.id;
+  if (id && seen.has(id)) {
+    if (msg?.model) acc.model = msg.model;
+    return obj.timestamp ?? null;
+  }
+  if (id) seen.add(id);
   const inp = u.input_tokens ?? 0;
   const out = u.output_tokens ?? 0;
   const cr = u.cache_read_input_tokens ?? 0;
@@ -98,14 +110,16 @@ export function parseSession(filePath: string, project: string, sessionId: strin
   let raw: string;
   try { raw = readFileSync(filePath, "utf8"); } catch { return null; }
   const acc = emptyTok();
+  const seen = new Set<string>(); // 按 message.id 去重,见 accLine 注释
   let msgCount = 0;
   let last: string | null = null;
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     let obj: RawLine;
     try { obj = JSON.parse(line) as RawLine; } catch { continue; }
-    if (obj.type === "assistant") msgCount++;
-    const ts = accLine(acc, obj);
+    // messageCount 也按 message.id 去重:重复行不是新消息,否则消息数同样虚高。
+    if (obj.type === "assistant" && !(obj.message?.id && seen.has(obj.message.id))) msgCount++;
+    const ts = accLine(acc, obj, seen);
     if (ts && (!last || ts > last)) last = ts;
   }
   return {

@@ -200,7 +200,11 @@ function RiskBars(rows, height = 132, onPick) {
   });
   return root;
 }
-function DailyBars(rows, selDate, onPick) {
+function DailyBars(rows, selDate, onPick, opts = {}) {
+  // opts:月视图复用同一柱状图,只换文案与刻度 —— nowWord("今天"/"本月")、tipAction、tick(刻度格式)
+  const nowWord = opts.nowWord || "今天";
+  const tipAction = opts.tipAction || "点击看当天明细";
+  const tick = opts.tick || ((l) => l.slice(5));
   const W = 720, H = 150, P = 24;
   const data = [...rows].reverse(); // rows 是日期降序,reverse 成升序(左旧右新)
   const max = Math.max(1, ...data.map((r) => r.v));
@@ -218,11 +222,11 @@ function DailyBars(rows, selDate, onPick) {
     root.appendChild(svg("rect", { x, y: H - P - ht, width: bw, height: ht, rx: 3, fill }));
     if (isSel) root.appendChild(svg("circle", { cx: x + bw / 2, cy: H - P - ht - 7, r: 3, fill: "var(--accent)" }));
     const hit = svg("rect", { x: x - (step - bw) / 2, y: P, width: step, height: H - P * 2, fill: "transparent", class: "chart-hit" });
-    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${r.label}</b>${isToday ? " · 今天" : ""}<br>${fmtK(r.v)} token · 点击看当天明细`));
+    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${r.label}</b>${isToday ? " · " + nowWord : ""}<br>${fmtK(r.v)} token · ${tipAction}`));
     hit.addEventListener("mouseleave", hideTip);
     hit.addEventListener("click", () => { hideTip(); onPick && onPick(isToday ? null : r.label); });
     root.appendChild(hit);
-    if (i % 2 === 0) { const t = svg("text", { x: x + bw / 2, y: H - 8, "text-anchor": "middle", "font-size": "9.5", fill: isSel ? "var(--accent)" : "var(--fg-subtle)", "font-family": "var(--font-mono)" }); t.textContent = r.label.slice(5); root.appendChild(t); }
+    if (i % 2 === 0) { const t = svg("text", { x: x + bw / 2, y: H - 8, "text-anchor": "middle", "font-size": "9.5", fill: isSel ? "var(--accent)" : "var(--fg-subtle)", "font-family": "var(--font-mono)" }); t.textContent = tick(r.label); root.appendChild(t); }
   });
   return root;
 }
@@ -1385,8 +1389,29 @@ async function shareUsageCard(day, isToday, trend, nowText, btn) {
   }
 }
 
-const usageState = { selDate: null }; // null = 今天
+const usageState = { selDate: null, mode: "day", selMonth: null }; // selDate null=今天;mode day|月;selMonth null=最近月
+
+/** 把日粒度 DailyStat[](日期降序)聚合成月粒度(月份降序)。纯前端聚合,后端 /api/daily/list 本就返回全量。 */
+function monthlyStats(daily) {
+  const byMonth = new Map();
+  for (const d of daily) {
+    const key = d.date.slice(0, 7); // YYYY-MM
+    const cur = byMonth.get(key) ?? { month: key, days: 0, activeMs: 0, toolCalls: 0, estCostUsd: 0, messages: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, total: 0 } };
+    cur.days++; cur.activeMs += d.activeMs; cur.toolCalls += d.toolCalls; cur.estCostUsd += d.estCostUsd; cur.messages += d.messages.total;
+    cur.tokens.input += d.tokens.input; cur.tokens.output += d.tokens.output; cur.tokens.cacheRead += d.tokens.cacheRead;
+    cur.tokens.cacheCreate += d.tokens.cacheCreate; cur.tokens.total += d.tokens.total;
+    byMonth.set(key, cur);
+  }
+  return [...byMonth.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
 function UsageView({ today, daily, projects, sessions, ov }) {
+  const isMonth = usageState.mode === "month";
+  const months = monthlyStats(daily);
+  // 月模式选中月:默认最近月(months[0]);日模式为 null
+  const mon = isMonth ? ((usageState.selMonth && months.find((m) => m.month === usageState.selMonth)) || months[0] || null) : null;
+  const isCurMonth = mon != null && months.length > 0 && mon.month === months[0].month;
   // 选中某天则取那天的 DailyStat(结构与 today 一致);否则用 today
   const sel = usageState.selDate ? daily.find((d) => d.date === usageState.selDate) : null;
   const day = sel || today;
@@ -1400,6 +1425,52 @@ function UsageView({ today, daily, projects, sessions, ov }) {
   const nowText = shareStamp(isToday ? null : day.date);
   const maxCost = Math.max(1, ...projects.map((p) => p.estCostUsd));
   const pick = (date) => { usageState.selDate = date; PAGES.usage(); };
+  const pickMonth = (m) => { usageState.selMonth = m; PAGES.usage(); };
+  const setMode = (m) => { usageState.mode = m; PAGES.usage(); };
+  const modeSeg = h("div", { class: "seg seg-mini" }, ...[["day", "日"], ["month", "月"]].map(([k, label]) =>
+    h("button", { class: "seg-btn" + (usageState.mode === k ? " on" : ""), onClick: () => setMode(k) }, label)));
+
+  // ── 月视图 ──
+  if (isMonth) {
+    if (!mon) return F(
+      h("div", { class: "queue-head", style: { marginBottom: "-6px" } },
+        h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px" } },
+          h("span", { class: "ds-label sec-label", style: { fontSize: "13px" } }, "月度概览")),
+        h("div", { class: "sec-right" }, modeSeg)),
+      Card({}, Empty("还没有月度数据", "Activity")));
+    const monLabel = isCurMonth ? "本月" : mon.month; // "本月" 或 "2026-06"
+    const cachePctM = mon.tokens.total ? ((mon.tokens.cacheRead / mon.tokens.total) * 100).toFixed(0) : 0;
+    const monthRows = months.map((m) => ({ label: m.month, v: m.tokens.total }));
+    const monDays = daily.filter((d) => d.date.startsWith(mon.month));
+    // 点某天一行 → 下钻回日视图看那天
+    const drillDay = (date) => { usageState.mode = "day"; usageState.selDate = date === today.date ? null : date; PAGES.usage(); };
+    return F(
+      h("div", { class: "queue-head", style: { marginBottom: "-6px" } },
+        h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px" } },
+          h("span", { class: "ds-label sec-label", style: { fontSize: "13px" } }, `${monLabel}概览`),
+          !isCurMonth && h("span", { class: "sec-hint" }, "历史月份 · 按每日数据汇总")),
+        h("div", { class: "sec-right" },
+          !isCurMonth && h("button", { class: "btn btn-quiet btn-sm", onClick: () => pickMonth(null) }, Icon("CornerUpLeft", 13), "回到本月"),
+          modeSeg)),
+      h("div", { class: "stat-row" },
+        Stat(fmtDur(mon.activeMs), monLabel + "活跃时长", `${mon.days} 个活跃日 · 日均 ${fmtDur(mon.activeMs / mon.days)}`),
+        Stat(fmtK(mon.tokens.total), monLabel + " token", `cache ${cachePctM}% · out ${fmtK(mon.tokens.output)}`),
+        Stat(mon.toolCalls.toLocaleString(), "工具调用", `${mon.messages} 条消息`),
+        Stat("$" + mon.estCostUsd.toFixed(1), monLabel + "估算成本", `日均 $${(mon.estCostUsd / mon.days).toFixed(1)} · 非账单`, "warning")),
+      Card({}, SectionTitle("每月 token", isCurMonth ? "点任意一根柱子,看那个月的汇总与明细。" : `已选 ${mon.month} —— 高亮的那根。点最右柱子或「回到本月」复位。`),
+        DailyBars(monthRows, usageState.selMonth, pickMonth, { nowWord: "本月", tipAction: "点击看该月汇总", tick: (l) => l.slice(2) })),
+      Card({}, SectionTitle(`${mon.month} 每日明细`, "点一行跳到那天的日视图"),
+        h("table", { class: "tbl tbl-tight" },
+          h("thead", null, h("tr", null, h("th", null, "日期"), h("th", { class: "num" }, "活跃"), h("th", { class: "num" }, "token"), h("th", { class: "num" }, "工具"), h("th", { class: "num" }, "估算"))),
+          h("tbody", null, ...monDays.map((d) =>
+            h("tr", { class: "row-click", role: "button", tabindex: "0", onClick: () => drillDay(d.date), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); drillDay(d.date); } } },
+              h("td", null, h("span", { class: "mono" }, d.date)),
+              h("td", { class: "num" }, fmtDur(d.activeMs)),
+              h("td", { class: "num" }, h("span", { class: "mono" }, fmtK(d.tokens.total))),
+              h("td", { class: "num" }, d.toolCalls),
+              h("td", { class: "num" }, h("span", { class: "mono" }, "$" + d.estCostUsd.toFixed(0)))))))),
+      h("p", { class: "foot-note", style: { margin: 0 } }, `月度数字由每日统计求和;成本为按模型单价的估算,非账单级精确 · 数据来自本机 session 日志,不上传。`));
+  }
   return F(
     h("div", { class: "queue-head", style: { marginBottom: "-6px" } },
       h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px" } },
@@ -1407,7 +1478,8 @@ function UsageView({ today, daily, projects, sessions, ov }) {
         !isToday && h("span", { class: "sec-hint" }, "历史某天 · 数据快照")),
       h("div", { class: "sec-right" },
         !isToday && h("button", { class: "btn btn-quiet btn-sm", onClick: () => pick(null) }, Icon("CornerUpLeft", 13), "回到今天"),
-        h("button", { class: "btn btn-ghost btn-sm", onClick: (e) => shareUsageCard(day, isToday, trend, nowText, e.currentTarget) }, Icon("Copy", 13), "分享当天为图片"))),
+        h("button", { class: "btn btn-ghost btn-sm", onClick: (e) => shareUsageCard(day, isToday, trend, nowText, e.currentTarget) }, Icon("Copy", 13), "分享当天为图片"),
+        modeSeg)),
     h("div", { class: "stat-row" },
       Stat(fmtDur(day.activeMs), dayLabel + "活跃时长", `会话跨度 ${fmtDur(day.sessionSpanMs)}`),
       Stat(fmtK(day.tokens.total), dayLabel + " token", `cache ${cachePct}% · out ${fmtK(day.tokens.output)}`),

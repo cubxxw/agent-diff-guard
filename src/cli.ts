@@ -27,6 +27,8 @@ const HELP = `agent-diff-guard — 合并前的 agent 改动守门人
   agent-diff-guard check [选项]      扫一次改动(默认行为)
   agent-diff-guard serve [--port N]  启动本地审计面板(读历史守门记录)
   agent-diff-guard doctor [--json]   接入自检:回答"我接好了吗"(事件/采集源/仓库)
+  agent-diff-guard replay [--days N] 回放过去 N 天(默认 30)agent 碰过什么敏感东西
+                                     零配置、只读本机日志 —— 60 秒回答"我需要守门吗"
   agent-diff-guard context [--json]  输出本仓库"危险地图",供 agent 编码前读取
   agent-diff-guard inbox [--json]    读取面板下发的决策指令(供终端 Claude Code 消费)
                                      [--done <id>] 标记某条已处理并归档
@@ -206,6 +208,25 @@ async function main(): Promise<void> {
     console.log("");
     console.log(C.dim("挂实时守门(PreToolUse 刹车): bun src/cli.ts loop install-hook --agent claude"));
     process.exit(events.length > 0 || sources.length > 0 ? 0 : 1);
+  }
+
+  // replay 子命令:60 秒 aha 入口。零配置回放"过去 N 天 agent 碰过什么敏感东西",
+  // 吃现成 collectors 数据,不装 hook 也能跑 —— 要么后背发凉当场装 hook,要么确认干净。
+  if (cmd === "replay") {
+    const daysIdx = rawArgs.indexOf("--days");
+    const days = daysIdx >= 0 ? Math.max(1, parseInt(rawArgs[daysIdx + 1] ?? "30", 10) || 30) : 30;
+    const { allTranscripts } = await import("./transcript");
+    const { availableCollectors } = await import("./collectors/registry");
+    const { readEvents } = await import("./logger");
+    const { buildReplayReport, renderReplayTerminal } = await import("./replay");
+    const report = buildReplayReport({
+      transcripts: allTranscripts(),
+      sources: availableCollectors().map((c) => c.name),
+      events: readEvents(),
+      days,
+    });
+    console.log(rawArgs.includes("--json") ? JSON.stringify(report, null, 2) : renderReplayTerminal(report));
+    process.exit(0);
   }
 
   // inbox 子命令:终端侧消费面板下发的决策指令。这是"面板 → 终端 Claude Code"闭环的终端端。

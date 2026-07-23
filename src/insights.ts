@@ -36,7 +36,8 @@ export interface RepoInsight {
 }
 
 // 用文件名(而非完整路径)能判定的规则子集。目录型规则对纯文件名判不准,跳过。
-const FILENAME_MATCHABLE = SENSITIVE_PATH_RULES.filter(
+// 导出:replay 子命令复用同一子集做历史回放,一处定义,避免"哪些规则可用文件名判"两处漂移。
+export const FILENAME_MATCHABLE = SENSITIVE_PATH_RULES.filter(
   (r) => !/workflows|k8s|kubernetes|manifests|helm|charts/.test(r.test.source)
 );
 

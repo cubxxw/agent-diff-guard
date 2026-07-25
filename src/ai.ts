@@ -196,6 +196,29 @@ export function buildAnalysisInput(events: GuardEvent[]): AnalysisInput {
 }
 
 /**
+ * 上游故障文案识别:有些 OpenAI 兼容网关(reasoning 引擎)在内部故障时不返 5xx,
+ * 而是 HTTP 200 + 把错误英文塞进 message.content(如 "... reasoning engine returned
+ * an error")。若不识别,这段错误文案会被当成正常回答透传到面板。命中任一信号即视为
+ * 失败 → 返回 null,让调用方走既有的优雅降级(前端接地问答 / 面板照常只读)。
+ */
+const UPSTREAM_ERROR_SIGNALS = [
+  "reasoning engine returned an error",
+  "returned an error",
+  "upstream error",
+  "internal server error",
+  "service unavailable",
+  "rate limit",
+];
+function looksLikeUpstreamError(content: string): boolean {
+  const s = content.trim();
+  // 正常回答恒为 JSON(response_format=json_object),不会以错误句式开头;且裸错误文案通常很短。
+  if (s.length > 400) return false; // 长内容更可能是真 JSON,避免误杀
+  const lower = s.toLowerCase();
+  if (lower.startsWith("{")) return false; // 看起来是 JSON,交给后续 parse 处理
+  return UPSTREAM_ERROR_SIGNALS.some((sig) => lower.includes(sig));
+}
+
+/**
  * 通用 DeepSeek 调用:发 messages,拿回 content 字符串。任何失败返回 null。
  * analyzeEvents / analyzeInsights 共用这一层,避免重复 fetch/超时/降级代码。
  */
@@ -214,11 +237,29 @@ async function callDeepSeek(
       signal: controller.signal,
     });
     if (!res.ok) {
-      console.warn(`[ai] DeepSeek 返回 ${res.status}(降级,不影响面板)`);
+      // 读出错误 body 摘要再降级 —— 否则只剩状态码,上游故障根因无从查起。
+      const detail = await res.text().catch(() => "");
+      console.warn(`[ai] DeepSeek 返回 ${res.status}(降级,不影响面板)${detail ? ":" + detail.slice(0, 300) : ""}`);
       return null;
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return data.choices?.[0]?.message?.content ?? null;
+    const data = (await res.json()) as {
+      error?: { message?: string } | string;
+      choices?: { message?: { content?: string } }[];
+    };
+    // 网关把错误塞进 OpenAI 兼容的 error 字段(HTTP 仍 200)。
+    if (data.error) {
+      const msg = typeof data.error === "string" ? data.error : data.error.message;
+      console.warn(`[ai] 上游返回 error 字段(降级):${(msg || "").slice(0, 300)}`);
+      return null;
+    }
+    const content = data.choices?.[0]?.message?.content ?? null;
+    // 网关把错误塞进 content(HTTP 200、无 error 字段)—— 这是面板出现
+    // "Vantage's reasoning engine returned an error" 的根因路径。
+    if (content && looksLikeUpstreamError(content)) {
+      console.warn(`[ai] content 疑似上游故障文案(降级):${content.slice(0, 300)}`);
+      return null;
+    }
+    return content;
   } catch (e) {
     console.warn("[ai] 分析失败(降级,不影响面板):", (e as Error).message);
     return null;

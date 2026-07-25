@@ -78,3 +78,53 @@ test("answerAskGuard:空问题返回 null", async () => {
   const reply = await answerAskGuard("   ", { route: "overview" }, { config: { apiKey: "k", baseUrl: "https://x", model: "m" } });
   expect(reply).toBeNull();
 });
+
+// 上游故障降级:网关把错误塞进 200 响应(content / error 字段)或返回非 2xx 时,
+// 必须降级为 null —— 不能把 "... reasoning engine returned an error" 当成回答透传到面板。
+const CFG = { apiKey: "k", baseUrl: "https://x", model: "m" };
+function withMockFetch(makeResponse: () => Response | Promise<Response>, fn: () => Promise<void>) {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => makeResponse()) as unknown as typeof fetch;
+  return fn().finally(() => { globalThis.fetch = orig; });
+}
+
+test("answerAskGuard:上游把错误塞进 200 content → 降级 null(根因路径)", async () => {
+  await withMockFetch(
+    () => new Response(JSON.stringify({ choices: [{ message: { content: "Vantage's reasoning engine returned an error" } }] }), { status: 200 }),
+    async () => {
+      const reply = await answerAskGuard("态势如何", { route: "overview" }, { config: CFG });
+      expect(reply).toBeNull();
+    }
+  );
+});
+
+test("answerAskGuard:上游 200 但带 error 字段 → 降级 null", async () => {
+  await withMockFetch(
+    () => new Response(JSON.stringify({ error: { message: "internal server error" } }), { status: 200 }),
+    async () => {
+      const reply = await answerAskGuard("态势如何", { route: "overview" }, { config: CFG });
+      expect(reply).toBeNull();
+    }
+  );
+});
+
+test("answerAskGuard:上游非 2xx → 降级 null", async () => {
+  await withMockFetch(
+    () => new Response("upstream 503", { status: 503 }),
+    async () => {
+      const reply = await answerAskGuard("态势如何", { route: "overview" }, { config: CFG });
+      expect(reply).toBeNull();
+    }
+  );
+});
+
+test("answerAskGuard:正常 JSON 回答正常返回(不误杀)", async () => {
+  await withMockFetch(
+    () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ blocks: [{ kind: "p", text: "一切正常" }] }) } }] }), { status: 200 }),
+    async () => {
+      const reply = await answerAskGuard("态势如何", { route: "overview" }, { config: CFG });
+      expect(reply).not.toBeNull();
+      expect(reply?.blocks?.[0]).toMatchObject({ kind: "p", text: "一切正常" });
+    }
+  );
+});

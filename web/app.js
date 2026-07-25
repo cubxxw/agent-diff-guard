@@ -1228,7 +1228,7 @@ function sparkline(points, width, height, color) {
 // 社交炫耀·数据海报(560×680)。所有样式内联、零 emoji(全 SVG path 图标)、字体静默 fallback。
 // 大背景渐变在 renderCardBlob 的外层 SVG 铺底,这里根 div 透明。
 // trend = 近 14 天 token 数值数组;nowText = 已格式化的"日期+时区+生成时刻"锚点(本地实时)。
-function usageCardHTML(day, isToday, trend, nowText) {
+function usageCardHTML(day, isToday, trend, nowText, opts = {}) {
   const W = 560, H = 680;
   const C = { fg: "#2B2822", muted: "#6B6560", subtle: "#857F79", accent: "#5D3000",
     accentSoft: "#F5EDE3", warn: "#8A5800", succ: "#4C7A3F", surface: "#FFFFFF", heroInk: "#FBEFE0", heroDim: "#D9B98E" };
@@ -1256,16 +1256,36 @@ function usageCardHTML(day, isToday, trend, nowText) {
     cache: '<path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z"/><path d="M3 6v12c0 1.7 4 3 9 3s9-1.3 9-3V6"/>',
     folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/>',
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
   };
 
   const spark = sparkline(Array.isArray(trend) ? trend : [], 496, 56, C.heroDim);
 
-  const stats = [
-    { ic: P.clock, label: "活跃时长", val: dur(day.activeMs), tone: C.fg },
-    { ic: P.tool, label: "工具调用", val: (Number(day.toolCalls) || 0).toLocaleString("en-US"), tone: C.fg },
-    { ic: P.cache, label: "cache 命中", val: cacheTxt, tone: C.succ },
-    { ic: P.folder, label: "活跃项目", val: (Number(day.projects) || 0).toLocaleString("en-US"), tone: C.fg },
-  ];
+  // ── 日 / 月 文案与指标自适应(同一个海报模板,渲染"日报"或"月报") ──
+  const isMonthCard = opts.kind === "month";
+  const titleText = isMonthCard ? "agent-diff-guard · 我的 AI 算力月报" : "agent-diff-guard · 我的 AI 算力日报";
+  const badgeText = isMonthCard
+    ? `${esc(day.month)} · 月度快照 · ${tzLabel()}`
+    : (isToday ? esc(nowText) : `${esc(day.date)} · 当日快照`);
+  const heroText = isMonthCard
+    ? (opts.curMonth ? "这个月,我让 AI 吞下了" : "这一个月,AI 吞下了")
+    : (isToday ? "今天,我让 AI 吞下了" : "这一天,AI 吞下了");
+  const trendTitle = isMonthCard ? `${esc(day.month)} 每日 token` : "14-day trend";
+  const trendNow = isMonthCard ? `${esc(fmtTok(totalTok))} month` : `${esc(fmtTok(totalTok))} today`;
+
+  const stats = isMonthCard
+    ? [
+        { ic: P.calendar, label: "活跃天数", val: (Number(day.days) || 0) + " 天", tone: C.fg },
+        { ic: P.tool, label: "工具调用", val: (Number(day.toolCalls) || 0).toLocaleString("en-US"), tone: C.fg },
+        { ic: P.cache, label: "cache 命中", val: cacheTxt, tone: C.succ },
+        { ic: P.spark, label: "日均 token", val: fmtTok(day.tokens.total / Math.max(1, Number(day.days) || 1)), tone: C.fg },
+      ]
+    : [
+        { ic: P.clock, label: "活跃时长", val: dur(day.activeMs), tone: C.fg },
+        { ic: P.tool, label: "工具调用", val: (Number(day.toolCalls) || 0).toLocaleString("en-US"), tone: C.fg },
+        { ic: P.cache, label: "cache 命中", val: cacheTxt, tone: C.succ },
+        { ic: P.folder, label: "活跃项目", val: (Number(day.projects) || 0).toLocaleString("en-US"), tone: C.fg },
+      ];
   const statCards = stats.map((s) =>
     `<div style="flex:1;min-width:0;background:${C.surface};border:1px solid #ECE3D7;border-radius:14px;padding:12px 11px 13px;box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 2px 6px rgba(93,48,0,.05);">`
     + `<div style="display:flex;align-items:center;gap:5px;margin-bottom:7px;">${icon(s.ic, s.tone === C.succ ? C.succ : C.accent, 14)}`
@@ -1273,7 +1293,7 @@ function usageCardHTML(day, isToday, trend, nowText) {
     + `<div style="font:700 19px/1 ${mono};color:${s.tone};letter-spacing:-.02em;">${esc(s.val)}</div></div>`
   ).join("");
 
-  const dateText = isToday ? esc(nowText) : `${esc(day.date)} · 当日快照`;
+  const dateText = badgeText;
 
   return `
   <div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:transparent;box-sizing:border-box;font-family:${disp};color:${C.fg};position:relative;">
@@ -1284,10 +1304,10 @@ function usageCardHTML(day, isToday, trend, nowText) {
       <div style="position:relative;">
         <div style="display:flex;align-items:center;gap:7px;">
           ${icon(P.spark, "#F2B670", 16)}
-          <span style="font:700 13px/1 ${disp};color:${C.heroInk};letter-spacing:.01em;">agent-diff-guard · 我的 AI 算力日报</span>
+          <span style="font:700 13px/1 ${disp};color:${C.heroInk};letter-spacing:.01em;">${titleText}</span>
         </div>
         <div style="margin-top:9px;display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,235,210,.25);border-radius:999px;padding:5px 12px;font:600 12px/1 ${mono};color:${C.heroInk};letter-spacing:.02em;">${dateText}</div>
-        <div style="margin-top:26px;font:500 15px/1.2 ${disp};color:${C.heroDim};letter-spacing:.04em;">${isToday ? "今天,我让 AI 吞下了" : "这一天,AI 吞下了"}</div>
+        <div style="margin-top:26px;font:500 15px/1.2 ${disp};color:${C.heroDim};letter-spacing:.04em;">${heroText}</div>
         <div style="margin-top:4px;display:flex;align-items:baseline;gap:10px;">
           <span style="font:700 72px/0.92 ${mono};color:#FFF7EC;letter-spacing:-.03em;">${esc(fmtTok(totalTok))}</span>
           <span style="font:600 18px/1 ${disp};color:${C.heroDim};padding-bottom:6px;">tokens</span>
@@ -1308,25 +1328,25 @@ function usageCardHTML(day, isToday, trend, nowText) {
 
     <div style="margin:16px 18px 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <span style="font:600 10px/1 ${disp};color:${C.subtle};letter-spacing:.08em;text-transform:uppercase;">14-day trend</span>
-        <span style="font:600 10px/1 ${mono};color:${C.subtle};">${esc(fmtTok(totalTok))} today</span>
+        <span style="font:600 10px/1 ${disp};color:${C.subtle};letter-spacing:.08em;text-transform:uppercase;">${trendTitle}</span>
+        <span style="font:600 10px/1 ${mono};color:${C.subtle};">${trendNow}</span>
       </div>
       <div style="height:56px;">${spark}</div>
     </div>
 
     <div style="position:absolute;left:18px;right:18px;bottom:18px;">
       <div style="font:700 17px/1.2 ${disp};color:${C.fg};letter-spacing:.01em;">不是我卷,是我的 agent 们卷。</div>
-      <div style="margin-top:6px;font:600 12px/1 ${mono};color:${C.warn};letter-spacing:.02em;">#AI算力日报  #agentdiffguard</div>
+      <div style="margin-top:6px;font:600 12px/1 ${mono};color:${C.warn};letter-spacing:.02em;">${isMonthCard ? "#AI算力月报" : "#AI算力日报"}  #agentdiffguard</div>
     </div>
   </div>`;
 }
 
 // 把海报 HTML 经 SVG foreignObject 渲染成 PNG Blob(2x 高清)。
 // 大背景渐变用 SVG <linearGradient>+<rect> 铺在 foreignObject 之下(比 CSS gradient 在此管线下更可靠),卡片根 div 透明。
-function renderCardBlob(day, isToday, trend, nowText) {
+function renderCardBlob(day, isToday, trend, nowText, opts = {}) {
   return new Promise((resolve, reject) => {
     const W = 560, H = 680, SCALE = 2;
-    const inner = usageCardHTML(day, isToday, trend, nowText);
+    const inner = usageCardHTML(day, isToday, trend, nowText, opts);
     const svgStr =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
       `<defs>` +
@@ -1369,6 +1389,38 @@ async function shareUsageCard(day, isToday, trend, nowText, btn) {
   };
   try {
     const blob = await renderCardBlob(day, isToday, trend, nowText);
+    // 优先:复制到剪贴板(可直接粘进聊天/文档)
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        toast("已复制为图片,可直接粘贴", "Copy");
+      } catch {
+        // 剪贴板被拒(权限/非安全上下文/非聚焦)→ 在此显式降级下载,并给反馈,不吞错。
+        downloadBlob(blob);
+        toast("剪贴板被拒,已改为下载图片", "ArrowRight");
+      }
+    } else {
+      // 浏览器无 ClipboardItem → 直接下载。
+      downloadBlob(blob);
+      toast("剪贴板不可用,已下载图片", "ArrowRight");
+    }
+  } catch (e) {
+    toast("生成图片失败:" + e.message, "TriangleAlert");
+  }
+}
+
+// 入口:把"某月"聚合数据做成月报海报 → 复制/下载(与 shareUsageCard 同管线,只是 kind=month)。
+async function shareMonthCard(mon, isCurMonth, trend, btn) {
+  // 降级:把图片做成下载。无论是剪贴板 API 缺失,还是 write() 被权限/非安全上下文拒绝,都走这里 —— 绝不静默失败。
+  const downloadBlob = (blob) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `adg-usage-${mon.month}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  try {
+    const blob = await renderCardBlob(mon, false, trend, null, { kind: "month", curMonth: isCurMonth });
     // 优先:复制到剪贴板(可直接粘进聊天/文档)
     if (navigator.clipboard && window.ClipboardItem) {
       try {
@@ -1442,6 +1494,8 @@ function UsageView({ today, daily, projects, sessions, ov }) {
     const cachePctM = mon.tokens.total ? ((mon.tokens.cacheRead / mon.tokens.total) * 100).toFixed(0) : 0;
     const monthRows = months.map((m) => ({ label: m.month, v: m.tokens.total }));
     const monDays = daily.filter((d) => d.date.startsWith(mon.month));
+    // 月报分享:当月内每日 token,时间正序(旧→新),喂给海报 sparkline。
+    const monthTrend = monDays.slice().reverse().map((d) => d.tokens.total);
     // 点某天一行 → 下钻回日视图看那天
     const drillDay = (date) => { usageState.mode = "day"; usageState.selDate = date === today.date ? null : date; PAGES.usage(); };
     return F(
@@ -1451,6 +1505,7 @@ function UsageView({ today, daily, projects, sessions, ov }) {
           !isCurMonth && h("span", { class: "sec-hint" }, "历史月份 · 按每日数据汇总")),
         h("div", { class: "sec-right" },
           !isCurMonth && h("button", { class: "btn btn-quiet btn-sm", onClick: () => pickMonth(null) }, Icon("CornerUpLeft", 13), "回到本月"),
+          h("button", { class: "btn btn-ghost btn-sm", onClick: (e) => shareMonthCard(mon, isCurMonth, monthTrend, e.currentTarget) }, Icon("Copy", 13), "分享当月为图片"),
           modeSeg)),
       h("div", { class: "stat-row" },
         Stat(fmtDur(mon.activeMs), monLabel + "活跃时长", `${mon.days} 个活跃日 · 日均 ${fmtDur(mon.activeMs / mon.days)}`),

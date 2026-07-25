@@ -10,9 +10,10 @@
 
 import type { Collector, RepoTranscript, TaskTurn } from "./types";
 import { claudeCodeCollector } from "./claude-code";
+import { codexCollector } from "./codex";
 
 /** 已注册的采集源。新 agent 在此登记即接入(无需改主干)。 */
-export const COLLECTORS: Collector[] = [claudeCodeCollector];
+export const COLLECTORS: Collector[] = [claudeCodeCollector, codexCollector];
 
 /** 当前在本机可用的采集源(对应日志目录存在)。 */
 export function availableCollectors(): Collector[] {
